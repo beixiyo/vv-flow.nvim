@@ -1,0 +1,207 @@
+-- vv-flow.scan — 用 rg --json 跨文件扫描标记
+--
+-- 流程沿用 vv-replace/search.lua：每条 rule 一个 -e，rg 输出 NDJSON 流式收集，
+-- 进程结束后一次性解析 + 分类，回调返回扁平 record 列表。ripgrep 已是项目硬依赖。
+--
+-- 分类（按匹配文本，足够覆盖内置两类）：
+--   * 前缀后首字符是数字 → number marker（解析出整数供数值排序）
+--   * 前缀后是字母       → keyword marker（小写词名，对应 rule.name）
+--   * 其余               → custom（按字面归组）
+
+local M = {}
+
+-- 解析一批 NDJSON 行，返回已解析对象 + 遗留的不完整尾串
+---@param text string
+---@param buffer string
+---@return any[] parsed, string new_buffer
+local function parse_ndjson_chunk(text, buffer)
+  local parsed = {}
+  local combined = buffer .. text
+  local start = 1
+  while true do
+    local nl = combined:find('\n', start, true)
+    if not nl then break end
+    local line = combined:sub(start, nl - 1)
+    start = nl + 1
+    if #line > 0 then
+      local ok, obj = pcall(vim.json.decode, line)
+      if ok then parsed[#parsed + 1] = obj end
+    end
+  end
+  return parsed, combined:sub(start)
+end
+
+-- 兜底：按匹配文本字面归类（当没有 rule 完整匹配时用）
+---@param text string 匹配到的标记文本，如 '@TODO' / '@17.'
+---@param prefix string
+---@return { kind: string, name: string, num: integer? }
+local function classify_by_text(text, prefix)
+  local body = text
+  if prefix ~= '' and text:sub(1, #prefix) == prefix then
+    body = text:sub(#prefix + 1)
+  end
+  local digits = body:match('^%d+')
+  if digits then
+    return { kind = 'number', name = 'number', num = tonumber(digits) }
+  end
+  local word = body:match('^%a[%w_]*')
+  if word then
+    return { kind = 'keyword', name = word:lower() }
+  end
+  return { kind = 'custom', name = text }
+end
+
+-- 预编译各 rule 的 vim.regex，供「按命中规则」归类
+---@param rules VVFlowRule[]
+local function compile_matchers(rules)
+  local matchers = {}
+  for _, r in ipairs(rules) do
+    local ok, re = pcall(vim.regex, r.vim_regex)
+    matchers[#matchers + 1] = { rule = r, regex = ok and re or nil }
+  end
+  return matchers
+end
+
+-- 归类：rg 多 -e 一起跑时 submatch 不带「哪条规则命中」，故对匹配文本逐条回测，
+-- 取第一条「完整匹配」的 rule 决定 kind/name（custom 规则的 name 也才能对上面板分组）；
+-- 全不中再退回字面派生
+---@param text string
+---@param prefix string
+---@param matchers { rule: VVFlowRule, regex: any }[]
+---@return { kind: string, name: string, num: integer? }
+local function classify(text, prefix, matchers)
+  for _, m in ipairs(matchers) do
+    if m.regex then
+      local s, e = m.regex:match_str(text)
+      if s == 0 and e == #text then
+        local num
+        if m.rule.kind == 'number' then num = tonumber(text:match('%d+')) end
+        return { kind = m.rule.kind, name = m.rule.name, num = num }
+      end
+    end
+  end
+  return classify_by_text(text, prefix)
+end
+
+-- 构造 rg 参数
+---@param rules VVFlowRule[]
+---@param root string
+---@param opts { max_results: integer, rg_extra_args: string[] }
+---@return string[]
+local function build_args(rules, root, opts)
+  local args = { '--json', '--color=never', '--line-number', '--no-heading', '--max-columns=1000' }
+  for _, r in ipairs(rules) do
+    args[#args + 1] = '-e'
+    args[#args + 1] = r.rg_pattern
+  end
+  for _, extra in ipairs(opts.rg_extra_args or {}) do
+    args[#args + 1] = extra
+  end
+  args[#args + 1] = root
+  return args
+end
+
+-- 异步扫描；cb(records) 在主线程回调
+---@param root string
+---@param rules VVFlowRule[]
+---@param opts { prefix: string, max_results: integer, rg_extra_args: string[] }
+---@param cb fun(records: VVFlowRecord[], err?: string)
+function M.scan(root, rules, opts, cb)
+  if #rules == 0 then
+    cb({})
+    return
+  end
+
+  local matchers = compile_matchers(rules)
+  local args = build_args(rules, root, opts)
+  local collected = {}
+  local stdout_buf = ''
+  local stderr_buf = ''
+  local finished = false
+  local max = opts.max_results or 5000
+  local truncated = false
+
+  local job
+  job = vim.system({ 'rg', unpack(args) }, {
+    text = true,
+    cwd = root,
+    stdout = function(err, data)
+      if finished or err or not data then return end
+      local parsed, new_buf = parse_ndjson_chunk(data, stdout_buf)
+      stdout_buf = new_buf
+      for _, obj in ipairs(parsed) do
+        if obj.type == 'match' then
+          if #collected < max then
+            collected[#collected + 1] = obj
+          else
+            truncated = true
+          end
+        end
+      end
+      if truncated and job then
+        pcall(function() job:kill('sigterm') end)
+      end
+    end,
+    stderr = function(err, data)
+      if err or not data then return end
+      stderr_buf = stderr_buf .. data
+    end,
+  }, function(result)
+    if finished then return end
+    finished = true
+    vim.schedule(function()
+      if #stdout_buf > 0 then
+        local ok, obj = pcall(vim.json.decode, stdout_buf)
+        if ok and obj.type == 'match' then collected[#collected + 1] = obj end
+      end
+
+      -- code 0 = 有匹配，1 = 无匹配（正常）。其余（如 2 = 部分文件不可读，或被
+      -- SIGTERM 截断）只要已收集到结果就照常投递——避免「单个不可读目录 / 截断」
+      -- 把整张面板清空。仅在「非 0/1 且无任何收集且非截断」时才当真错误。
+      local hard_err = result.code ~= 0 and result.code ~= 1 and not truncated and #collected == 0
+      if hard_err then
+        cb({}, stderr_buf ~= '' and vim.trim(stderr_buf) or ('rg exit ' .. tostring(result.code)))
+        return
+      end
+
+      local records = {}
+      for _, obj in ipairs(collected) do
+        local data = obj.data
+        local path = data.path and data.path.text
+        local lnum = data.line_number
+        local line_text = (data.lines and data.lines.text) or ''
+        if path and lnum then
+          for _, sm in ipairs(data.submatches or {}) do
+            local text = sm.match and sm.match.text
+            if text then
+              local meta = classify(text, opts.prefix, matchers)
+              records[#records + 1] = {
+                file = path,
+                lnum = lnum,
+                col = (sm.start or 0) + 1,  -- rg start 为 0-based byte → 1-based
+                text = text,
+                preview = vim.trim(line_text),
+                kind = meta.kind,
+                name = meta.name,
+                num = meta.num,
+              }
+            end
+          end
+        end
+      end
+      cb(records, truncated and 'truncated' or nil)
+    end)
+  end)
+end
+
+return M
+
+---@class VVFlowRecord
+---@field file string      绝对路径
+---@field lnum integer     1-based 行号
+---@field col integer      1-based 列
+---@field text string      匹配到的标记文本（如 '@TODO' / '@17.'）
+---@field preview string   该行去空白后的内容，作面板预览
+---@field kind 'number'|'keyword'|'custom'
+---@field name string      归组键（'number' 或小写关键字名）
+---@field num? integer     编号标记的数值（供数值排序）

@@ -1,0 +1,139 @@
+-- vv-flow.nvim 冒烟测试
+--
+-- 运行方式：luajit tests/test_smoke.lua（纯逻辑测试）
+-- 或在 nvim 中 :luafile tests/test_smoke.lua
+--
+-- 覆盖 rules.build 的规则编译（纯 lua，不依赖 nvim API）：内置编号 / 关键字规则的
+-- vim 正则与 rg 正则构造、大小写敏感、末尾点可选、custom 透传、hl_specs。
+-- 实时高亮 / 扫描 / 面板 / 预览等依赖 nvim API 的运行时行为见仓库 README 的 headless 验证。
+
+-- 把插件 lua/ 加入 package.path（相对本脚本定位）
+local src = debug.getinfo(1, 'S').source:gsub('^@', '')
+local dir = src:match('(.*/)') or './'
+package.path = dir .. '../lua/?.lua;' .. dir .. '../lua/?/init.lua;' .. package.path
+
+local Rules = require('vv-flow.rules')
+
+local passed, failed = 0, 0
+
+---@param name string
+---@param fn fun()
+local function test(name, fn)
+  local ok, err = pcall(fn)
+  if ok then
+    passed = passed + 1
+    print('  PASS: ' .. name)
+  else
+    failed = failed + 1
+    print('  FAIL: ' .. name .. ' — ' .. tostring(err))
+  end
+end
+
+local function assert_eq(actual, expected, msg)
+  if actual ~= expected then
+    error(string.format('%s: expected %q, got %q', msg or 'assert_eq', tostring(expected), tostring(actual)))
+  end
+end
+
+---@param rules VVFlowRule[]
+---@param name string
+local function find(rules, name)
+  for _, r in ipairs(rules) do
+    if r.name == name then return r end
+  end
+end
+
+-- 基础配置（模拟 setup 后的 config）
+local function base_cfg(over)
+  local cfg = {
+    prefix = '@',
+    ignore_case = true,
+    number = { enable = true, color = '#bb9af7', icon = '', require_dot = false },
+    keywords = { TODO = { color = '#7aa2f7' }, BUG = { color = '#f7768e' } },
+    custom = {},
+  }
+  for k, v in pairs(over or {}) do cfg[k] = v end
+  return cfg
+end
+
+print('\n[rules] 内置规则构造')
+
+test('编号 + 关键字规则都生成，编号在最前', function()
+  local rules = Rules.build(base_cfg())
+  assert_eq(rules[1].name, 'number', '第一条应为编号规则')
+  assert(find(rules, 'todo'), 'todo 规则存在')
+  assert(find(rules, 'bug'), 'bug 规则存在')
+end)
+
+test('编号规则：末尾点可选（vim \\.\\=，rg \\.?）', function()
+  local n = find(Rules.build(base_cfg()), 'number')
+  assert_eq(n.vim_regex, '@\\d\\+\\.\\=', 'number vim_regex')
+  assert_eq(n.rg_pattern, '@\\d+\\.?', 'number rg_pattern')
+  assert_eq(n.kind, 'number', 'number kind')
+end)
+
+test('编号规则：require_dot=true 时末尾点必需', function()
+  local n = find(Rules.build(base_cfg({ number = { enable = true, require_dot = true } })), 'number')
+  assert_eq(n.vim_regex, '@\\d\\+\\.', 'number vim_regex (dot required)')
+  assert_eq(n.rg_pattern, '@\\d+\\.', 'number rg_pattern (dot required)')
+end)
+
+test('编号规则：number.enable=false 时不生成', function()
+  local rules = Rules.build(base_cfg({ number = { enable = false } }))
+  assert_eq(find(rules, 'number'), nil, 'number disabled')
+end)
+
+test('关键字规则：大小写不敏感（vim \\c，rg (?i)，词尾 \\> / \\b）', function()
+  local t = find(Rules.build(base_cfg()), 'todo')
+  assert_eq(t.vim_regex, '\\c@TODO\\>', 'todo vim_regex')
+  assert_eq(t.rg_pattern, '(?i)@TODO\\b', 'todo rg_pattern')
+  assert_eq(t.hl, 'VVFlowKwTODO', 'todo hl name')
+  assert_eq(t.label, '@TODO', 'todo label')
+end)
+
+test('关键字规则：ignore_case=false 时区分大小写（\\C，无 (?i)）', function()
+  local t = find(Rules.build(base_cfg({ ignore_case = false })), 'todo')
+  assert_eq(t.vim_regex, '\\C@TODO\\>', 'todo vim_regex (case-sensitive)')
+  assert_eq(t.rg_pattern, '@TODO\\b', 'todo rg_pattern (case-sensitive)')
+end)
+
+print('\n[rules] custom 透传')
+
+test('custom 规则按提供的 vim/rg 正则与 name 透传', function()
+  local rules = Rules.build(base_cfg({ custom = {
+    { name = 'ticket', vim_regex = '@JIRA-\\d\\+', rg_pattern = '@JIRA-\\d+', kind = 'custom', color = '#7dcfff' },
+  } }))
+  local c = find(rules, 'ticket')
+  assert(c, 'ticket 规则存在')
+  assert_eq(c.vim_regex, '@JIRA-\\d\\+', 'ticket vim_regex')
+  assert_eq(c.rg_pattern, '@JIRA-\\d+', 'ticket rg_pattern')
+  assert_eq(c.kind, 'custom', 'ticket kind')
+end)
+
+test('custom 规则缺少必填字段时被忽略', function()
+  local rules = Rules.build(base_cfg({ custom = { { name = 'bad' } } }))  -- 无 vim/rg
+  assert_eq(find(rules, 'bad'), nil, '不完整 custom 被跳过')
+end)
+
+print('\n[rules] hl_specs')
+
+test('hl_specs 为带颜色的规则生成高亮 spec', function()
+  local rules = Rules.build(base_cfg())
+  local specs = Rules.hl_specs(rules)
+  assert(specs.VVFlowKwTODO, 'TODO 高亮组存在')
+  assert_eq(specs.VVFlowKwTODO.fg, '#7aa2f7', 'TODO fg')
+  assert_eq(specs.VVFlowKwTODO.bold, true, 'TODO bold')
+  assert(specs.VVFlowNumber, 'number 高亮组存在')
+end)
+
+test('自定义前缀生效（prefix=//）', function()
+  local n = find(Rules.build(base_cfg({ prefix = '//' })), 'number')
+  assert_eq(n.vim_regex, '//\\d\\+\\.\\=', 'custom prefix vim_regex')
+  assert_eq(n.rg_pattern, '//\\d+\\.?', 'custom prefix rg_pattern')
+end)
+
+print(string.format('\n总计: %d passed, %d failed', passed, failed))
+if failed > 0 then
+  print('有测试未通过！')
+  os.exit(1)
+end
