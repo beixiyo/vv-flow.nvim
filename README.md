@@ -18,7 +18,9 @@
 
 - **实时高亮**：buffer 内标记即时上色（`extmark` + 每规则一个 `vim.regex`），随 `ColorScheme` 重挂
 - **跨文件面板**：`rg --json` 扫描项目 → 侧栏列表，分组 + 排序，每行 `<CR>` 跳转
-- **实时预览**：面板里 `j`/`k` 移动，主窗口实时打开标记位置并高亮该行（**防抖**、焦点留在面板，参照 vv-explorer）；关闭面板自动还原打开前的 buffer
+- **实时预览**：面板里 `j`/`k` 移动，主窗口实时打开标记位置并高亮该行（**防抖**、焦点留在面板，参照 vv-explorer）；`C-e`/`C-y` 滚动预览（每次 5 行）；关闭面板自动还原打开前的 buffer
+- **`/` 过滤**：面板内 `/` 弹出输入框，实时（防抖）按子串过滤条目（大小写不敏感，匹配标记/预览/路径），两个模式通用
+- **Vim marks 面板**：`<Tab>` 切到 vim marks 列表（全局 A-Z / 局部 a-z 分组），同样可预览/跳转/`d` 删除/`/` 过滤——把 `:marks` 接管成可视面板
 - **任意正则**：`custom` 规则支持自定义标记语法（自带 `vim_regex` + `rg_pattern`）
 
 ## 使用
@@ -29,7 +31,7 @@
 :VVFlowEnable / :VVFlowDisable / :VVFlowToggle   " 实时高亮开关
 ```
 
-面板内：`j`/`k` 移动（**实时预览**）· `C-e`/`C-y` 滚动预览（每次 5 行）· `<CR>`/`l`/`o` 打开跳转（保留面板）· `gf` 跳转并关闭面板 · `h` 折叠分组 · `<Tab>` 折叠 · `R`/`M` 全展开/折叠 · `r` 重扫 · `g?` 帮助 · `q` 关闭
+面板内：`j`/`k` 移动（**实时预览**）· `C-e`/`C-y` 滚动预览（每次 5 行）· `<CR>`/`l`/`o` 打开跳转（保留面板）· `gf` 跳转并关闭面板 · `/` 过滤 · **`<Tab>` 切换 flow ↔ vim marks** · `d` 删除 mark（marks 模式）· `h` 折叠分组 · `R`/`M` 全展开/折叠 · `r` 重扫 · `g?` 帮助 · `<Esc>` 清过滤/关闭 · `q` 关闭
 
 ## 配置（默认值）
 
@@ -54,6 +56,9 @@ require('vv-flow').setup({
   highlight = true,        -- 启动即开实时高亮
   preview = true,          -- 面板 j/k 移动时实时预览标记位置
   preview_debounce_ms = 138, -- 预览防抖（毫秒），0 = 不防抖
+  marks = {                -- vim marks 面板（Tab 切换）
+    show = { global = true, buffer = true, numbered = false, special = false },
+  },
 })
 ```
 

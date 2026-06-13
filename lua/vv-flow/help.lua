@@ -12,18 +12,21 @@ local ACTIONS = {
   ['collapse group']      = { cat = 'Navigate', icon = '' },
   ['jump / toggle group'] = { cat = 'Navigate', icon = '' },
   ['jump & close']        = { cat = 'Navigate', icon = '' },
-  ['toggle group']        = { cat = 'Navigate', icon = '' },
   ['click']               = { cat = 'Navigate', icon = '' },
   ['scroll preview down'] = { cat = 'View',     icon = '' },
   ['scroll preview up']   = { cat = 'View',     icon = '' },
   ['expand all']          = { cat = 'View',     icon = '' },
   ['collapse all']        = { cat = 'View',     icon = '' },
   ['rescan']              = { cat = 'View',     icon = '' },
+  ['switch flow/marks']   = { cat = 'Mode',     icon = '' },
+  ['filter']              = { cat = 'Mode',     icon = '' },
+  ['delete mark']         = { cat = 'Mode',     icon = '' },
+  ['close / clear filter'] = { cat = 'Panel',   icon = '' },
   ['close']               = { cat = 'Panel',    icon = '' },
   ['help']                = { cat = 'Panel',    icon = '' },
 }
 
-local CATEGORIES = { 'Navigate', 'View', 'Panel' }
+local CATEGORIES = { 'Navigate', 'View', 'Mode', 'Panel' }
 
 ---@param source_buf integer 面板 buffer
 function M.open(source_buf)

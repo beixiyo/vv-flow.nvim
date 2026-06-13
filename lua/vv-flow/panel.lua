@@ -5,19 +5,26 @@
 -- 跳转抄 vv-replace/actions.lua（edit + set_cursor + zz）；鼠标遵循 AGENTS 规范。
 
 local hl = require('vv-utils.hl')
+local Match = require('vv-utils.match')
 local Scan = require('vv-flow.scan')
 local Rules = require('vv-flow.rules')
+local Marks = require('vv-flow.marks')
 
 local M = {}
 
 local ns = vim.api.nvim_create_namespace('vv_flow_panel')
 
----@type { buf: integer?, win: integer?, prev_win: integer?, root: string?, groups: table[]?, scan_token: integer, preview_enabled: boolean?, preview_cancel: fun()? }
-local state = { buf = nil, win = nil, prev_win = nil, root = nil, groups = nil, scan_token = 0 }
+-- mode: 'flow'（rg 扫描的流程/TODO 标记）| 'marks'（vim marks）。Tab 切换，两模式共用 filter
+-- filter_mode: 'fixed'|'subseq'|'regex'（filter 浮窗内 <S-Tab> 轮换），filter_invalid 标记非法 regex
+---@type { buf: integer?, win: integer?, prev_win: integer?, root: string?, groups: table[]?, records: table[]?, rules: table[]?, mode: string, filter_query: string, filter_mode: string, filter_invalid: boolean?, filter_close: fun()?, scan_token: integer, preview_enabled: boolean?, preview_cancel: fun()? }
+local state = { buf = nil, win = nil, prev_win = nil, root = nil, groups = nil, records = nil, rules = nil, mode = 'flow', filter_query = '', filter_mode = 'fixed', scan_token = 0 }
 
 -- 行 → 数据映射：{ kind='group'|'marker', group_idx, marker? }
 ---@type table<integer, table>
 local line_map = {}
+
+-- 前置声明：数据层（rebuild/do_scan/load_marks）被交互层与 create_buf 引用，互相也有引用
+local rebuild, do_scan, load_marks
 
 local CHEV_OPEN = '▾'
 local CHEV_CLOSED = '▸'
@@ -38,6 +45,10 @@ hl.register('vv-flow.panel.hl', {
   VVFlowPanelPreview   = { link = 'Comment' },
   VVFlowPanelEmpty     = { link = 'Comment' },
   VVFlowPanelFooter    = { link = 'Comment' },
+  VVFlowMarkGlobal     = { link = 'Identifier' },
+  VVFlowMarkBuffer     = { link = 'Function' },
+  VVFlowMarkNumbered   = { link = 'Number' },
+  VVFlowMarkSpecial    = { link = 'Special' },
 })
 
 -- ============================================================
@@ -51,10 +62,12 @@ hl.register('vv-flow.panel.hl', {
 local function relpath(root, file)
   local ok, rel = pcall(vim.fs.relpath, root, file)
   if ok and rel then return rel end
-  if root and file:sub(1, #root + 1) == root .. '/' then
+  if root and root ~= '' and file:sub(1, #root + 1) == root .. '/' then
     return file:sub(#root + 2)
   end
-  return vim.fn.fnamemodify(file, ':t')
+  -- 不在 root 之下（如 marks 模式指向别处的 mark）：用 ~ 缩写而非只剩 basename，
+  -- 保留路径区分度（~/other-proj/lib/foo.lua、/etc/hosts）
+  return vim.fn.fnamemodify(file, ':~')
 end
 
 -- 把 records 按 rules 顺序归组并排序
@@ -111,6 +124,48 @@ local function build_groups(records, rules)
   return out
 end
 
+-- mark 面板分组：按固定顺序成组、组内按 mark 字符排序
+local MARK_GROUPS = {
+  { name = 'Global A-Z', hl = 'VVFlowMarkGlobal' },
+  { name = 'Buffer a-z', hl = 'VVFlowMarkBuffer' },
+  { name = 'Numbered',   hl = 'VVFlowMarkNumbered' },
+  { name = 'Special',    hl = 'VVFlowMarkSpecial' },
+}
+
+---@param records table[]
+---@return table[]
+local function build_mark_groups(records)
+  local by_name = {}
+  for _, r in ipairs(records) do
+    by_name[r.name] = by_name[r.name] or {}
+    table.insert(by_name[r.name], r)
+  end
+  local out = {}
+  for _, meta in ipairs(MARK_GROUPS) do
+    local items = by_name[meta.name]
+    if items and #items > 0 then
+      table.sort(items, function(a, b)
+        if (a.mark or '') ~= (b.mark or '') then return (a.mark or '') < (b.mark or '') end
+        return a.lnum < b.lnum
+      end)
+      out[#out + 1] = {
+        name = meta.name, label = meta.name, icon = '', hl = meta.hl,
+        kind = 'mark', markers = items, open = true,
+      }
+    end
+  end
+  return out
+end
+
+-- filter 干草堆：标记原文 + 整行 + 相对路径 + 组名拼成一条字符串
+-- 用与渲染相同的 relpath 口径，过滤词与面板里看到的路径一致
+---@param rec table
+---@return string
+local function record_hay(rec)
+  local rel = relpath(state.root or '', rec.file or '')
+  return (rec.text or '') .. '\n' .. (rec.preview or '') .. '\n' .. rel .. '\n' .. (rec.name or '')
+end
+
 -- ============================================================
 -- 渲染
 -- ============================================================
@@ -130,25 +185,33 @@ local function render()
 
   -- 头部
   local title_icon = ''
-  local title = '  ' .. title_icon .. '  Flow Marks'
+  local title_text = state.mode == 'marks' and 'Vim Marks' or 'Flow Marks'
+  local title = '  ' .. title_icon .. '  ' .. title_text
   lines[#lines + 1] = title
   mark(0, 2, 2 + #title_icon, 'VVFlowPanelTitleIcon')
   mark(0, 2 + #title_icon, #title, 'VVFlowPanelTitle')
-  table.insert(marks, { 0, #title, { virt_text = { {
-    string.format('  %d marks · %d groups', total, #(groups or {})), 'VVFlowPanelCount',
-  } }, virt_text_pos = 'eol' } })
+  local count_txt = string.format('  %d marks · %d groups', total, #(groups or {}))
+  if (state.filter_query or '') ~= '' then count_txt = count_txt .. '  /' .. state.filter_query end
+  table.insert(marks, { 0, #title, { virt_text = { { count_txt, 'VVFlowPanelCount' } }, virt_text_pos = 'eol' } })
 
   local sep = string.rep('─', 28)
   lines[#lines + 1] = sep
   mark(1, 0, #sep, 'VVFlowPanelSep')  -- end_col 须为字节长度，-1 会被 API 拒绝
   lines[#lines + 1] = ''
 
-  if not groups then
+  if state.records == nil then
     local s = '  Scanning…'
     lines[#lines + 1] = s
     mark(#lines - 1, 0, #s, 'VVFlowPanelEmpty')
   elseif total == 0 then
-    local s = '  (no marks found)'
+    local s
+    if (state.filter_query or '') ~= '' then
+      s = string.format("  (no matches for '%s')", state.filter_query)
+    elseif state.mode == 'marks' then
+      s = '  (no marks)'
+    else
+      s = '  (no marks found)'
+    end
     lines[#lines + 1] = s
     mark(#lines - 1, 0, #s, 'VVFlowPanelEmpty')
   else
@@ -196,7 +259,9 @@ local function render()
   end
 
   lines[#lines + 1] = ''
-  local footer = '  j/k preview · <CR> open · h fold · r rescan · g? help · q close'
+  local footer = state.mode == 'marks'
+    and '  j/k preview · <CR> open · d del · / filter · <Tab> flow · q'
+    or  '  j/k preview · <CR> open · / filter · <Tab> marks · g? help · q'
   lines[#lines + 1] = footer
   mark(#lines - 1, 0, #footer, 'VVFlowPanelFooter')
 
@@ -208,6 +273,33 @@ local function render()
   for _, m in ipairs(marks) do
     pcall(vim.api.nvim_buf_set_extmark, state.buf, ns, m[1], m[2], m[3])
   end
+end
+
+-- 用当前 records + filter + mode 重建分组并渲染（前置声明的赋值）
+rebuild = function()
+  local recs = state.records or {}
+  local q = state.filter_query or ''
+  if q ~= '' then
+    -- 编译一次查询谓词（按 filter_mode），再测每条 record；非法 regex 记 filter_invalid
+    local pred, ok = Match.compile(q, { mode = state.filter_mode, ignore_case = true })
+    state.filter_invalid = not ok
+    recs = vim.tbl_filter(function(r) return pred(record_hay(r)) end, recs)
+  else
+    state.filter_invalid = false
+  end
+  if state.mode == 'marks' then
+    state.groups = build_mark_groups(recs)
+  else
+    state.groups = build_groups(recs, state.rules or {})
+  end
+  render()
+end
+
+-- 载入 vim marks（同步）
+load_marks = function()
+  local cfg = require('vv-flow').get_config()
+  state.records = Marks.list(cfg.marks)
+  rebuild()
 end
 
 -- ============================================================
@@ -262,12 +354,6 @@ local function on_enter()
   elseif info.kind == 'marker' then
     jump(info.marker)
   end
-end
-
--- <Tab> 仅折叠分组（标记行不动），与 footer / help 的 'fold' 语义一致
-local function on_tab()
-  local info = line_map[vim.fn.line('.')]
-  if info and info.kind == 'group' then toggle_group(info.group_idx) end
 end
 
 local function expand_all(open)
@@ -338,6 +424,77 @@ local function collapse_current()
   end
 end
 
+-- <Tab>：在 flow 标记面板 ↔ vim marks 面板间切换（清空 filter 后重载）
+local function switch_mode()
+  state.mode = (state.mode == 'marks') and 'flow' or 'marks'
+  state.filter_query = ''
+  state.records = nil
+  state.scan_token = state.scan_token + 1  -- 作废在途的 flow 扫描回调，避免其覆盖 records
+  if state.mode == 'marks' then
+    load_marks()
+  else
+    render()  -- 先画 Scanning…
+    do_scan()
+  end
+end
+
+-- /：打开过滤输入框，实时筛 records（两模式通用）
+local function open_filter()
+  if not (state.win and vim.api.nvim_win_is_valid(state.win)) then return end
+  -- 记录浮窗 close 句柄，面板被任何路径关闭时一并关掉（见 cleanup），避免浮窗变孤儿
+  state.filter_close = require('vv-flow.filter').open(state.win, {
+    initial = state.filter_query or '',
+    get_mode = function() return state.filter_mode end,
+    on_cycle_mode = function()
+      state.filter_mode = Match.next_mode(state.filter_mode)
+      rebuild()  -- 按新模式立即重筛（badge 由 filter 的 ctx.redraw 刷新）
+    end,
+    status = function()
+      if (state.filter_query or '') == '' then return '' end
+      if state.filter_invalid then return 'bad pattern' end
+      local n = 0
+      for _, g in ipairs(state.groups or {}) do n = n + #g.markers end
+      return n == 0 and 'no matches' or string.format('%d match%s', n, n == 1 and '' or 'es')
+    end,
+    on_change = function(q)
+      state.filter_query = q
+      rebuild()
+    end,
+    on_accept = function(q)
+      state.filter_query = q
+      rebuild()
+      -- 跳到首条匹配的标记行（跳过分组头），过滤后立即预览首条命中
+      local first
+      for _, l in ipairs(selectable_lines()) do
+        if (line_map[l] or {}).kind == 'marker' then first = l break end
+      end
+      if first then pcall(vim.api.nvim_win_set_cursor, state.win, { first, 0 }) end
+    end,
+    on_cancel = function()
+      state.filter_query = ''
+      rebuild()
+    end,
+  })
+end
+
+-- d：删除光标所在的 vim mark（仅 marks 模式），删后重载
+local function delete_mark()
+  if state.mode ~= 'marks' then return end
+  local info = line_map[vim.fn.line('.')]
+  if not (info and info.kind == 'marker' and info.marker) then return end
+  if Marks.delete(info.marker) then load_marks() end
+end
+
+-- <Esc>：有过滤先清过滤，否则关面板
+local function on_esc()
+  if (state.filter_query or '') ~= '' then
+    state.filter_query = ''
+    rebuild()
+  else
+    M.close()
+  end
+end
+
 -- ============================================================
 -- 实时预览（参照 vv-explorer：CursorMoved + 防抖，焦点留在面板）
 -- ============================================================
@@ -402,6 +559,13 @@ local function reset_state()
   state.buf = nil
   state.prev_win = nil
   state.groups = nil
+  state.records = nil
+  state.rules = nil
+  state.mode = 'flow'
+  state.filter_query = ''
+  state.filter_mode = 'fixed'
+  state.filter_invalid = nil
+  state.filter_close = nil
   state.preview_enabled = nil
   state.preview_cancel = nil
   line_map = {}
@@ -410,6 +574,10 @@ end
 -- 统一清理：停防抖 + 还原主窗（未固定的预览）+ 复位状态。
 -- 供 M.close 与 BufWipeout（外部 :q / <C-w>c 关闭面板）共用，幂等。
 local function cleanup()
+  if state.filter_close then
+    pcall(state.filter_close)  -- 关掉可能仍开着的过滤浮窗（幂等），释放其 timer/augroup/buffer
+    state.filter_close = nil
+  end
   detach_preview()
   if state.preview_enabled then
     pcall(function() require('vv-flow.preview').restore() end)
@@ -431,7 +599,7 @@ local function create_buf()
     })
   end
   map('<CR>',  on_enter,                       'jump / toggle group')
-  map('<Tab>', on_tab,                         'toggle group')
+  map('<Tab>', switch_mode,                    'switch flow/marks')
   map('j',       function() navigate('j') end, 'next')
   map('k',       function() navigate('k') end, 'prev')
   map('<Down>',  function() navigate('j') end, 'next')
@@ -444,11 +612,13 @@ local function create_buf()
   map('<Left>',  collapse_current,              'collapse group')
   map('<C-e>',   function() scroll_preview(CE_KEY) end, 'scroll preview down')
   map('<C-y>',   function() scroll_preview(CY_KEY) end, 'scroll preview up')
+  map('/',       open_filter,                   'filter')
+  map('d',       delete_mark,                   'delete mark')
   map('R',     function() expand_all(true) end, 'expand all')
   map('M',     function() expand_all(false) end, 'collapse all')
   map('r',     function() M.refresh() end,      'rescan')
   map('q',     function() M.close() end,        'close')
-  map('<Esc>', function() M.close() end,        'close')
+  map('<Esc>', on_esc,                          'close / clear filter')
   map('g?',    function() M.show_help() end,    'help')
 
   -- 鼠标：左键松开 = 跳转/折叠；右键 = 定位后同 <CR>；屏蔽默认 visual 选区
@@ -468,11 +638,12 @@ local function create_buf()
   return buf
 end
 
--- 触发一次扫描并在完成后渲染
-local function do_scan()
+-- 触发一次扫描（flow 模式），完成后存 records + rebuild（赋值给前置声明）
+do_scan = function()
   local Flow = require('vv-flow')
   local cfg = Flow.get_config()
   local rules = Rules.build(cfg)
+  state.rules = rules
   state.scan_token = state.scan_token + 1
   local token = state.scan_token
 
@@ -486,8 +657,8 @@ local function do_scan()
     if err and err ~= 'truncated' then
       vim.notify('[vv-flow] 扫描失败：' .. err, vim.log.levels.ERROR)
     end
-    state.groups = build_groups(records, rules)
-    render()
+    state.records = records
+    rebuild()
   end)
 end
 
@@ -502,6 +673,9 @@ function M.open()
 
   state.prev_win = vim.api.nvim_get_current_win()
   state.root = require('vv-utils.path').get_root(vim.api.nvim_get_current_buf())
+  state.mode = 'flow'
+  state.filter_query = ''
+  state.records = nil
   state.groups = nil
   state.buf = create_buf()
   pcall(vim.api.nvim_buf_set_name, state.buf, 'vv-flow://' .. (state.root or ''))
@@ -548,6 +722,10 @@ end
 
 function M.refresh()
   if not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then return end
+  if state.mode == 'marks' then
+    load_marks()
+    return
+  end
   state.root = require('vv-utils.path').get_root(state.prev_win and vim.api.nvim_win_is_valid(state.prev_win)
     and vim.api.nvim_win_get_buf(state.prev_win) or vim.api.nvim_get_current_buf())
   do_scan()

@@ -60,6 +60,10 @@ local M = {}
 ---@field highlight boolean   启动即开启 buffer 实时高亮 @default true
 ---@field preview boolean     面板内光标移动时实时预览标记位置 @default true
 ---@field preview_debounce_ms integer  预览防抖延迟（毫秒），光标停顿后才触发；0 = 不防抖 @default 138
+---@field marks VVFlowMarksConfig  vim marks 面板（Tab 切换）配置
+
+---@class VVFlowMarksConfig
+---@field show { global: boolean, buffer: boolean, numbered: boolean, special: boolean }  各类 mark 是否显示 @default global/buffer=true, numbered/special=false
 
 ---@type VVFlowConfig
 local defaults = {
@@ -83,6 +87,7 @@ local defaults = {
   highlight = true,
   preview = true,
   preview_debounce_ms = 138,
+  marks = { show = { global = true, buffer = true, numbered = false, special = false } },
 }
 
 local config = defaults
