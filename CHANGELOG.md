@@ -16,3 +16,7 @@
 - **任意正则标记**：`custom` 规则支持自定义标记语法（自带 `vim_regex` + `rg_pattern`），扫描时按「命中规则」归类
 - **配置**：`prefix` / `ignore_case` / `keywords` / `number` / `custom` / `position` / `width` / `max_results` / `rg_extra_args` / `highlight` / `preview` / `preview_debounce_ms` / `marks`
 - **用户命令**：`:VVFlow`（面板开关）、`:VVFlowOpen` / `:VVFlowClose` / `:VVFlowRefresh`、`:VVFlowEnable` / `:VVFlowDisable` / `:VVFlowToggle`（实时高亮开关）
+
+### Changed
+
+- **过滤输入框骨架下沉 `vv-utils.prompt`**：与 vv-explorer 共用同一套双行浮动 filter 框，本仓 `filter.lua` 瘦成 ~60 行薄封装（只保留三模式 mode badge 元数据 + opts 适配）。纯内部重构，交互/外观不变
