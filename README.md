@@ -1,44 +1,53 @@
-# vv-flow.nvim
+<div align="center">
+  <h1>vv-flow.nvim</h1>
+  <p><a href="./README.md">English</a> | <a href="./README.zh-CN.md">中文</a></p>
+  <img src="./docs/assets/vv-flow.png" alt="vv-flow demo" width="900">
+  <p>Want my Neovim config? See <a href="https://github.com/beixiyo/dotfiles">dotfiles</a></p>
+  <p>Highlight code <strong>flow / TODO markers</strong> and navigate them in a sortable panel. Built from scratch with only <code>ripgrep</code> and <code>vv-utils</code> as dependencies</p>
+  <p><img src="https://img.shields.io/badge/Neovim-0.10%2B-57A143?logo=neovim&amp;logoColor=white" alt="Neovim"> <img src="https://img.shields.io/badge/Lua-2C2D72?logo=lua&amp;logoColor=white" alt="Lua"></p>
+</div>
 
-代码**流程 / TODO 标记**高亮 + 可排序跳转面板。自实现，仅依赖 `ripgrep` 与 `vv-utils`
+Inspired by VSCode's *Todo Tree* and ordered flow markers written as `@number.`: place `@1.`, `@2.`, and so on in comments to describe a flow across files. The panel sorts them **numerically**, so you can follow and navigate `@1 → @2 → … → @17`
 
-灵感来自 VSCode *Todo Tree* 与 `@数字.` 顺序流程标记：在注释里埋 `@1.` `@2.` … 标注一条
-跨文件流程，面板里**按编号数值排序**，顺着 `@1 → @2 → … → @17` 读懂并跳转
+## Requirements
 
-## 两类内置标记
+- [ripgrep](https://github.com/BurntSushi/ripgrep) — required for project-wide marker scanning through `rg --json`
+- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) — shared panel, prompt, matching, and timer utilities
 
-| 类型 | 例子 | 说明 |
-|------|------|------|
-| **关键字标记** | `@TODO` `@BUG` `@FIX` `@NOTE` `@HACK` `@WARN` `@PERF` | **大小写不敏感**（`@todo` == `@TODO`），各自配色，面板里按关键字分组 |
-| **编号标记** | `@1` `@01` `@17` `@3.` | 末尾 `.` **可选**，面板里**按数值升序**排成一条流程 |
+## Two built-in marker types
 
-面板**自动分两类**：`@number`（编号组，数值升序）与各关键字组，互不冲突
+| Type | Examples | Description |
+|------|----------|-------------|
+| **Keyword markers** | `@TODO` `@BUG` `@FIX` `@NOTE` `@HACK` `@WARN` `@PERF` | **Case-insensitive** (`@todo` == `@TODO`), individually colored, and grouped by keyword in the panel |
+| **Numbered markers** | `@1` `@01` `@17` `@3.` | The trailing `.` is **optional**; entries are sorted in **ascending numerical order** to form a flow |
 
-## 能力
+The panel **automatically separates both types**: numbered markers appear in an `@number` group sorted numerically, while each keyword has its own group, with no conflicts between them
 
-- **实时高亮**：buffer 内标记即时上色（`extmark` + 每规则一个 `vim.regex`），随 `ColorScheme` 重挂
-- **跨文件面板**：`rg --json` 扫描项目 → 侧栏列表，分组 + 排序，每行 `<CR>` 跳转
-- **实时预览**：面板里 `j`/`k` 移动，主窗口实时打开标记位置并高亮该行（**防抖**、焦点留在面板，参照 vv-explorer）；`C-e`/`C-y` 滚动预览（每次 5 行）；关闭面板自动还原打开前的 buffer
-- **`/` 过滤**：面板内 `/` 弹出输入框，实时（防抖）按子串过滤条目（大小写不敏感，匹配标记/预览/路径），两个模式通用
-- **Vim marks 面板**：`<Tab>` 切到 vim marks 列表（全局 A-Z / 局部 a-z 分组），同样可预览/跳转/`d` 删除/`/` 过滤——把 `:marks` 接管成可视面板
-- **任意正则**：`custom` 规则支持自定义标记语法（自带 `vim_regex` + `rg_pattern`）
+## Features
 
-## 使用
+- **Live highlighting**: markers are colored immediately inside the buffer (`extmark` + one `vim.regex` per rule), with highlights reapplied on `ColorScheme`
+- **Cross-file panel**: scans the project with `rg --json` and displays a grouped, sorted sidebar list; press `<CR>` on any entry to navigate to it
+- **Live preview**: moving with `j`/`k` in the panel opens the marker location in the main window and highlights its line in real time (**debounced**, while focus remains in the panel, following vv-explorer); scroll the preview by 5 lines with `C-e`/`C-y`; closing the panel restores the buffer that was open beforehand
+- **`/` filtering**: press `/` in the panel to open an input box and filter entries by substring in real time (debounced and case-insensitive, matching markers, previews, and paths); available in both modes
+- **Vim marks panel**: press `<Tab>` to switch to a Vim marks list, with global A-Z and buffer-local a-z marks grouped separately; it supports the same preview, navigation, `d` deletion, and `/` filtering, replacing `:marks` with a visual panel
+- **Arbitrary regular expressions**: `custom` rules support custom marker syntax with both `vim_regex` and `rg_pattern`
+
+## Usage
 
 ```vim
-:VVFlow          " 标记面板开关（默认键 <leader>ft）
+:VVFlow          " Toggle the marker panel (default key: <leader>ft)
 :VVFlowOpen / :VVFlowClose / :VVFlowRefresh
-:VVFlowEnable / :VVFlowDisable / :VVFlowToggle   " 实时高亮开关
+:VVFlowEnable / :VVFlowDisable / :VVFlowToggle   " Toggle live highlighting
 ```
 
-面板内：`j`/`k` 移动（**实时预览**）· `C-e`/`C-y` 滚动预览（每次 5 行）· `<CR>`/`l`/`o` 打开跳转（保留面板）· `gf` 跳转并关闭面板 · `/` 过滤 · **`<Tab>` 切换 flow ↔ vim marks** · `d` 删除 mark（marks 模式）· `h` 折叠分组 · `R`/`M` 全展开/折叠 · `r` 重扫 · `g?` 帮助 · `<Esc>` 清过滤/关闭 · `q` 关闭
+Inside the panel: move with `j`/`k` (**live preview**) · scroll the preview by 5 lines with `C-e`/`C-y` · open and navigate while keeping the panel with `<CR>`/`l`/`o` · navigate and close the panel with `gf` · filter with `/` · **switch between flow ↔ Vim marks with `<Tab>`** · delete a mark with `d` (marks mode) · collapse a group with `h` · expand/collapse all with `R`/`M` · rescan with `r` · open help with `g?` · clear the filter or close with `<Esc>` · close with `q`
 
-## 配置（默认值）
+## Configuration (defaults)
 
 ```lua
 require('vv-flow').setup({
-  prefix = '@',            -- 标记前缀
-  ignore_case = true,      -- 关键字大小写不敏感
+  prefix = '@',            -- Marker prefix
+  ignore_case = true,      -- Case-insensitive keywords
   keywords = {
     TODO = { color = '#7aa2f7', icon = '' },
     BUG  = { color = '#f7768e', icon = '' },
@@ -46,23 +55,22 @@ require('vv-flow').setup({
   },
   number = { enable = true, color = '#bb9af7', icon = '', require_dot = false },
   custom = {
-    -- 任意正则标记，例：把 @link(...) 也高亮成一类
+    -- Arbitrary regex marker; for example, highlight @link(...) as its own type
     -- { name = 'link', vim_regex = [[@link(]], rg_pattern = [[@link\(]], color = '#7dcfff' },
   },
-  position = 'right',      -- 面板侧 'left'|'right'
+  position = 'right',      -- Panel side: 'left'|'right'
   width = 42,
   max_results = 5000,
-  rg_extra_args = {},      -- 追加给 rg 的参数
-  highlight = true,        -- 启动即开实时高亮
-  preview = true,          -- 面板 j/k 移动时实时预览标记位置
-  preview_debounce_ms = 138, -- 预览防抖（毫秒），0 = 不防抖
-  marks = {                -- vim marks 面板（Tab 切换）
+  rg_extra_args = {},      -- Additional arguments passed to rg
+  highlight = true,        -- Enable live highlighting on startup
+  preview = true,          -- Live-preview marker locations while moving with j/k
+  preview_debounce_ms = 138, -- Preview debounce in milliseconds; 0 disables debouncing
+  marks = {                -- Vim marks panel (switch with Tab)
     show = { global = true, buffer = true, numbered = false, special = false },
   },
 })
 ```
 
-## 已知边界
+## Known limitations
 
-- 编号规则是 `<prefix>\d+\.?`，会命中代码里**任意** `@数字`，如 `user@123`、CSS `@2x`
-  这些一般不在意；若困扰，可设 `number.enable = false` 或用 `custom` 自定义更严格的正则
+- The numbered-marker rule is `<prefix>\d+\.?`, so it matches **any** `@number` in code, including `user@123` and CSS `@2x`. These matches are usually harmless; if they are distracting, set `number.enable = false` or define a stricter regular expression with `custom`
