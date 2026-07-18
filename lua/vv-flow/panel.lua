@@ -260,8 +260,8 @@ local function render()
 
   lines[#lines + 1] = ''
   local footer = state.mode == 'marks'
-    and '  j/k preview · <CR> open · d del · / filter · <Tab> flow · q'
-    or  '  j/k preview · <CR> open · / filter · <Tab> marks · g? help · q'
+    and '  Preview j/k · Open ↵ · Delete d · Filter / · Flow Tab · Close q'
+    or  '  Preview j/k · Open ↵ · Filter / · Marks Tab · Help g? · Close q'
   lines[#lines + 1] = footer
   mark(#lines - 1, 0, #footer, 'VVFlowPanelFooter')
 
@@ -630,10 +630,13 @@ local function create_buf()
     end
     on_enter()
   end, { buffer = buf, silent = true, nowait = true, desc = 'vv-flow: click' })
-  for _, key in ipairs({ '<LeftDrag>', '<2-LeftMouse>', '<RightRelease>', '<2-RightMouse>', '<3-RightMouse>', '<4-RightMouse>' }) do
+  -- 必须含 <3-LeftMouse>/<4-LeftMouse>：三击=选行、四击=选块，漏了「快速点几下」会误触发
+  for _, key in ipairs({ '<LeftDrag>', '<2-LeftMouse>', '<3-LeftMouse>', '<4-LeftMouse>', '<RightRelease>', '<2-RightMouse>', '<3-RightMouse>', '<4-RightMouse>' }) do
     vim.keymap.set({ 'n', 'x' }, key, '<Nop>', { buffer = buf, silent = true })
   end
   vim.keymap.set('x', '<RightMouse>', '<Esc>', { buffer = buf, silent = true })
+  -- 跨窗口点进面板再拖拽 / 多击时 buffer-local 映射拦不住，靠 ModeChanged 守卫兜底
+  require('vv-utils.mouse').block_visual_drag(buf)
 
   return buf
 end
