@@ -9,6 +9,7 @@
 --   * 其余               → custom（按字面归组）
 
 local M = {}
+local Glob = require('vv-utils.glob')
 
 -- 解析一批 NDJSON 行，返回已解析对象 + 遗留的不完整尾串
 ---@param text string
@@ -86,25 +87,36 @@ end
 -- 构造 rg 参数
 ---@param rules VVFlowRule[]
 ---@param root string
----@param opts { max_results: integer, rg_extra_args: string[] }
----@return string[]
+---@param opts { max_results: integer, exclude: string[], rg_extra_args: string[] }
+---@return string[]? args
+---@return string? error
 local function build_args(rules, root, opts)
   local args = { '--json', '--color=never', '--line-number', '--no-heading', '--max-columns=1000' }
   for _, r in ipairs(rules) do
     args[#args + 1] = '-e'
     args[#args + 1] = r.rg_pattern
   end
+  for _, source in ipairs(opts.exclude or {}) do
+    local patterns, err = Glob.compile_rg(source, { negate = true })
+    if not patterns then
+      return nil, ('无效的扫描排除项 %q：%s'):format(source, err)
+    end
+    for _, pattern in ipairs(patterns) do
+      args[#args + 1] = '--glob'
+      args[#args + 1] = pattern
+    end
+  end
   for _, extra in ipairs(opts.rg_extra_args or {}) do
     args[#args + 1] = extra
   end
   args[#args + 1] = root
-  return args
+  return args, nil
 end
 
 -- 异步扫描；cb(records) 在主线程回调
 ---@param root string
 ---@param rules VVFlowRule[]
----@param opts { prefix: string, max_results: integer, rg_extra_args: string[] }
+---@param opts { prefix: string, max_results: integer, exclude: string[], rg_extra_args: string[] }
 ---@param cb fun(records: VVFlowRecord[], err?: string)
 function M.scan(root, rules, opts, cb)
   if #rules == 0 then
@@ -113,7 +125,11 @@ function M.scan(root, rules, opts, cb)
   end
 
   local matchers = compile_matchers(rules)
-  local args = build_args(rules, root, opts)
+  local args, args_err = build_args(rules, root, opts)
+  if not args then
+    cb({}, args_err)
+    return
+  end
   local collected = {}
   local stdout_buf = ''
   local stderr_buf = ''

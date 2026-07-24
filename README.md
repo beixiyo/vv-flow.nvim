@@ -26,7 +26,7 @@ The panel **automatically separates both types**: numbered markers appear in an 
 ## Features
 
 - **Live highlighting**: markers are colored immediately inside the buffer (`extmark` + one `vim.regex` per rule), with highlights reapplied on `ColorScheme`
-- **Cross-file panel**: scans the project with `rg --json` and displays a grouped, sorted sidebar list; press `<CR>` on any entry to navigate to it
+- **Cross-file panel**: scans the project with `rg --json`, respects `.gitignore` / `.ignore` by default, and applies an additional cross-language exclusion list; press `<CR>` on any entry to navigate to it
 - **Live preview**: moving with `j`/`k` in the panel opens the marker location in the main window and highlights its line in real time (**debounced**, while focus remains in the panel, following vv-explorer); scroll the preview by 5 lines with `C-e`/`C-y`; closing the panel restores the buffer that was open beforehand
 - **`/` filtering**: press `/` in the panel to open an input box and filter entries by substring in real time (debounced and case-insensitive, matching markers, previews, and paths); available in both modes
 - **Vim marks panel**: press `<Tab>` to switch to a Vim marks list, with global A-Z and buffer-local a-z marks grouped separately; it supports the same preview, navigation, `d` deletion, and `/` filtering, replacing `:marks` with a visual panel
@@ -61,6 +61,14 @@ require('vv-flow').setup({
   position = 'right',      -- Panel side: 'left'|'right'
   width = 42,
   max_results = 5000,
+  -- VS Code-style globs excluded from project scans. Defaults cover dependency
+  -- directories, build output, caches, and lockfiles across common ecosystems
+  exclude = {
+    'node_modules', 'dist', 'build', 'target', 'vendor', '.venv',
+    '.gradle', 'bin', 'obj', 'Pods', '.dart_tool',
+    'pnpm-lock.yaml', 'Cargo.lock', 'poetry.lock', 'composer.lock',
+    -- See lua/vv-flow/init.lua for the complete default list
+  },
   rg_extra_args = {},      -- Additional arguments passed to rg
   highlight = true,        -- Enable live highlighting on startup
   preview = true,          -- Live-preview marker locations while moving with j/k

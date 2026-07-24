@@ -653,6 +653,7 @@ do_scan = function()
   Scan.scan(state.root, rules, {
     prefix = cfg.prefix or '@',
     max_results = cfg.max_results,
+    exclude = cfg.exclude,
     rg_extra_args = cfg.rg_extra_args,
   }, function(records, err)
     if token ~= state.scan_token then return end  -- 已被新扫描取代

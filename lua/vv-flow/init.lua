@@ -56,6 +56,7 @@ local M = {}
 ---@field position 'left'|'right'  面板侧 @default 'right'
 ---@field width integer       面板宽度（列） @default 42
 ---@field max_results integer 单次扫描结果上限 @default 5000
+---@field exclude string[]     扫描排除项（VS Code 风格 glob） @default 见 defaults.exclude
 ---@field rg_extra_args string[]  追加给 rg 的额外参数 @default {}
 ---@field highlight boolean   启动即开启 buffer 实时高亮 @default true
 ---@field preview boolean     面板内光标移动时实时预览标记位置 @default true
@@ -83,6 +84,45 @@ local defaults = {
   position = 'right',
   width = 42,
   max_results = 5000,
+  exclude = {
+    -- 版本控制 / 编辑器
+    '.git', '.idea', '.vscode',
+
+    -- JS / TS 与前端构建
+    'node_modules', '.pnpm', '.pnpm-store', '.yarn', '.bun',
+    '.next', '.nuxt', '.output', '.svelte-kit', '.astro', '.turbo',
+    'dist', 'build', 'out', 'coverage',
+    'pnpm-lock.yaml', 'package-lock.json', 'npm-shrinkwrap.json',
+    'yarn.lock', 'bun.lock', 'bun.lockb',
+
+    -- Rust / Go
+    'target', 'vendor', 'Cargo.lock', 'go.sum',
+
+    -- Python
+    '.venv', 'venv', '__pycache__', '.tox', '.nox',
+    '.pytest_cache', '.mypy_cache', '.ruff_cache',
+    'poetry.lock', 'uv.lock', 'Pipfile.lock',
+
+    -- Java / Kotlin / Scala
+    '.gradle', '.m2', '.bloop', '.metals',
+    'gradle.lockfile',
+
+    -- C / C++ / CMake
+    'CMakeFiles', 'cmake-build-*',
+
+    -- .NET
+    'bin', 'obj', 'packages.lock.json',
+
+    -- Ruby / PHP
+    '.bundle', 'vendor/bundle', 'Gemfile.lock', 'composer.lock',
+
+    -- Swift / iOS / Dart / Flutter
+    'DerivedData', '.build', 'Pods', '.dart_tool',
+    'Package.resolved', 'Podfile.lock', 'pubspec.lock',
+
+    -- 通用缓存
+    '.cache', '.local',
+  },
   rg_extra_args = {},
   highlight = true,
   preview = true,
@@ -156,6 +196,9 @@ function M.refresh() require('vv-flow.panel').refresh() end
 ---@param opts? VVFlowConfig
 function M.setup(opts)
   config = vim.tbl_deep_extend('force', vim.deepcopy(defaults), opts or {})
+  if opts and opts.exclude ~= nil then
+    config.exclude = vim.deepcopy(opts.exclude)
+  end
   rebuild()
 
   if config.highlight then M.enable() end

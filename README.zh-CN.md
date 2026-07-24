@@ -27,7 +27,7 @@
 ## 能力
 
 - **实时高亮**：buffer 内标记即时上色（`extmark` + 每规则一个 `vim.regex`），随 `ColorScheme` 重挂
-- **跨文件面板**：`rg --json` 扫描项目 → 侧栏列表，分组 + 排序，每行 `<CR>` 跳转
+- **跨文件面板**：`rg --json` 扫描项目，默认遵守 `.gitignore` / `.ignore`，并额外应用跨语言黑名单；侧栏按分组排序，每行 `<CR>` 跳转
 - **实时预览**：面板里 `j`/`k` 移动，主窗口实时打开标记位置并高亮该行（**防抖**、焦点留在面板，参照 vv-explorer）；`C-e`/`C-y` 滚动预览（每次 5 行）；关闭面板自动还原打开前的 buffer
 - **`/` 过滤**：面板内 `/` 弹出输入框，实时（防抖）按子串过滤条目（大小写不敏感，匹配标记/预览/路径），两个模式通用
 - **Vim marks 面板**：`<Tab>` 切到 vim marks 列表（全局 A-Z / 局部 a-z 分组），同样可预览/跳转/`d` 删除/`/` 过滤——把 `:marks` 接管成可视面板
@@ -62,6 +62,14 @@ require('vv-flow').setup({
   position = 'right',      -- 面板侧 'left'|'right'
   width = 42,
   max_results = 5000,
+  -- 项目扫描黑名单（VS Code 风格 glob），默认覆盖常见生态的依赖目录、
+  -- 构建产物、缓存与锁文件
+  exclude = {
+    'node_modules', 'dist', 'build', 'target', 'vendor', '.venv',
+    '.gradle', 'bin', 'obj', 'Pods', '.dart_tool',
+    'pnpm-lock.yaml', 'Cargo.lock', 'poetry.lock', 'composer.lock',
+    -- 完整默认列表见 lua/vv-flow/init.lua
+  },
   rg_extra_args = {},      -- 追加给 rg 的参数
   highlight = true,        -- 启动即开实时高亮
   preview = true,          -- 面板 j/k 移动时实时预览标记位置

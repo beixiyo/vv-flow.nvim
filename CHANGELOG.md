@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1] - 2026-07-24
+
+### Added
+
+- **跨语言扫描黑名单**：新增可覆盖的 `exclude` 配置，复用 `vv-utils.glob` 编译 VS Code 风格 glob；默认排除 JS / TS、Rust、Go、Python、Java / Kotlin / Scala、C / C++、.NET、Ruby / PHP、Swift / iOS、Dart / Flutter 的常见依赖目录、构建产物、缓存与锁文件
+- **扫描回归测试**：真实调用 `rg` 验证跨语言黑名单，并确认默认遵守 `.gitignore` / `.ignore`；即使通过 `rg_extra_args = { '--no-ignore' }` 放开 ignore，显式黑名单仍然生效
+
 ## [0.1.0] - 2026-07-13
 
 ### Added
