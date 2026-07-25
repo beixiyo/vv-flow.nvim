@@ -1,7 +1,7 @@
 <div align="center">
   <h1>vv-flow.nvim</h1>
   <p><a href="./README.md">English</a> | <a href="./README.zh-CN.md">中文</a></p>
-  <img src="./docs/assets/vv-flow.png" alt="vv-flow demo" width="900">
+  <img src="https://github.com/beixiyo/vv-flow.nvim/releases/download/assets-2026-07-25/vv-flow.png" alt="vv-flow demo" width="900">
   <p>Want my Neovim config? See <a href="https://github.com/beixiyo/dotfiles">dotfiles</a></p>
   <p>Highlight code <strong>flow / TODO markers</strong> and navigate them in a sortable panel. Built from scratch with only <code>ripgrep</code> and <code>vv-utils</code> as dependencies</p>
   <p><img src="https://img.shields.io/badge/Neovim-0.10%2B-57A143?logo=neovim&amp;logoColor=white" alt="Neovim"> <img src="https://img.shields.io/badge/Lua-2C2D72?logo=lua&amp;logoColor=white" alt="Lua"></p>

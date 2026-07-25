@@ -1,7 +1,7 @@
 <div align="center">
   <h1>vv-flow.nvim</h1>
   <p><a href="./README.md">English</a> | <a href="./README.zh-CN.md">中文</a></p>
-  <img src="./docs/assets/vv-flow.png" alt="vv-flow 演示" width="900">
+  <img src="https://github.com/beixiyo/vv-flow.nvim/releases/download/assets-2026-07-25/vv-flow.png" alt="vv-flow 演示" width="900">
   <p>想要我的 Neovim 配置？查看 <a href="https://github.com/beixiyo/dotfiles">dotfiles</a></p>
   <p>代码<strong>流程 / TODO 标记</strong>高亮 + 可排序跳转面板。自实现，仅依赖 <code>ripgrep</code> 与 <code>vv-utils</code></p>
   <p><img src="https://img.shields.io/badge/Neovim-0.10%2B-57A143?logo=neovim&amp;logoColor=white" alt="Neovim"> <img src="https://img.shields.io/badge/Lua-2C2D72?logo=lua&amp;logoColor=white" alt="Lua"></p>
