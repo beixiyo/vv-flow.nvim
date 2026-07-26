@@ -33,10 +33,10 @@ end
 ---@field initial?       string             初始查询 @default ''
 ---@field status?        fun(): string      实时状态文案（如 '12 matches'）
 ---@field get_mode?      fun(): string      当前过滤模式键（驱动 mode badge）
----@field on_cycle_mode? fun()              <S-Tab>：切到下一个模式（调用方负责轮换 + 重筛）
+---@field on_cycle_mode? fun()              # <S-Tab>：切到下一个模式（调用方负责轮换 + 重筛）
 ---@field on_change      fun(query: string) 防抖后每次输入变化（实时筛选）
----@field on_accept      fun(query: string) <CR>：保留过滤态，关闭输入框
----@field on_cancel      fun()              <Esc> / normal q / 失焦：取消过滤
+---@field on_accept      fun(query: string) # <CR>：保留过滤态，关闭输入框
+---@field on_cancel      fun()              # <Esc> / normal q / 失焦：取消过滤
 
 -- 打开过滤输入框
 ---@param panel_win integer    vv-flow 侧栏 window id

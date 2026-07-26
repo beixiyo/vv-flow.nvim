@@ -3,8 +3,8 @@
 -- 运行方式：luajit tests/test_smoke.lua（纯逻辑测试）
 -- 或在 nvim 中 :luafile tests/test_smoke.lua
 --
--- 覆盖 rules.build 的规则编译（纯 lua，不依赖 nvim API）：内置编号 / 关键字规则的
--- vim 正则与 rg 正则构造、大小写敏感、末尾点可选、custom 透传、hl_specs。
+-- 覆盖 rules.build 的规则编译（纯 lua，不依赖 nvim API）：内置 step / 关键字规则的
+-- vim 正则与 rg 正则构造、大小写敏感、custom 透传、hl_specs。
 -- 实时高亮 / 扫描 / 面板 / 预览等依赖 nvim API 的运行时行为见仓库 README 的 headless 验证。
 
 -- 把插件 lua/ 加入 package.path（相对本脚本定位）
@@ -48,7 +48,7 @@ local function base_cfg(over)
   local cfg = {
     prefix = '@',
     ignore_case = true,
-    number = { enable = true, color = '#bb9af7', icon = '', require_dot = false },
+    step = { enable = true, keyword = 'STEP', ignore_case = true, color = '#bb9af7', icon = '' },
     keywords = { TODO = { color = '#7aa2f7' }, BUG = { color = '#f7768e' } },
     custom = {},
   }
@@ -58,29 +58,31 @@ end
 
 print('\n[rules] 内置规则构造')
 
-test('编号 + 关键字规则都生成，编号在最前', function()
+test('step + 关键字规则都生成，step 在最前', function()
   local rules = Rules.build(base_cfg())
-  assert_eq(rules[1].name, 'number', '第一条应为编号规则')
+  assert_eq(rules[1].name, 'step', '第一条应为 step 规则')
   assert(find(rules, 'todo'), 'todo 规则存在')
   assert(find(rules, 'bug'), 'bug 规则存在')
 end)
 
-test('编号规则：末尾点可选（vim \\.\\=，rg \\.?）', function()
-  local n = find(Rules.build(base_cfg()), 'number')
-  assert_eq(n.vim_regex, '@\\d\\+\\.\\=', 'number vim_regex')
-  assert_eq(n.rg_pattern, '@\\d+\\.?', 'number rg_pattern')
-  assert_eq(n.kind, 'number', 'number kind')
+test('step 规则：命名空间 + 末尾数字，默认大小写不敏感', function()
+  local step = find(Rules.build(base_cfg()), 'step')
+  assert_eq(step.vim_regex, '\\c@STEP:[a-z][a-z0-9_-]*-\\d\\+\\>', 'step vim_regex')
+  assert_eq(step.rg_pattern, '(?i)@STEP:[a-z][a-z0-9_-]*-\\d+\\b', 'step rg_pattern')
+  assert_eq(step.kind, 'step', 'step kind')
 end)
 
-test('编号规则：require_dot=true 时末尾点必需', function()
-  local n = find(Rules.build(base_cfg({ number = { enable = true, require_dot = true } })), 'number')
-  assert_eq(n.vim_regex, '@\\d\\+\\.', 'number vim_regex (dot required)')
-  assert_eq(n.rg_pattern, '@\\d+\\.', 'number rg_pattern (dot required)')
+test('step 规则：ignore_case=false 时区分大小写', function()
+  local step = find(Rules.build(base_cfg({
+    step = { enable = true, keyword = 'STEP', ignore_case = false },
+  })), 'step')
+  assert_eq(step.vim_regex, '\\C@STEP:[a-z][a-z0-9_-]*-\\d\\+\\>', 'case-sensitive vim_regex')
+  assert_eq(step.rg_pattern, '@STEP:[a-z][a-z0-9_-]*-\\d+\\b', 'case-sensitive rg_pattern')
 end)
 
-test('编号规则：number.enable=false 时不生成', function()
-  local rules = Rules.build(base_cfg({ number = { enable = false } }))
-  assert_eq(find(rules, 'number'), nil, 'number disabled')
+test('step.enable=false 时不生成', function()
+  local rules = Rules.build(base_cfg({ step = { enable = false } }))
+  assert_eq(find(rules, 'step'), nil, 'step disabled')
 end)
 
 test('关键字规则：大小写不敏感（vim \\c，rg (?i)，词尾 \\> / \\b）', function()
@@ -123,13 +125,13 @@ test('hl_specs 为带颜色的规则生成高亮 spec', function()
   assert(specs.VVFlowKwTODO, 'TODO 高亮组存在')
   assert_eq(specs.VVFlowKwTODO.fg, '#7aa2f7', 'TODO fg')
   assert_eq(specs.VVFlowKwTODO.bold, true, 'TODO bold')
-  assert(specs.VVFlowNumber, 'number 高亮组存在')
+  assert(specs.VVFlowStep, 'step 高亮组存在')
 end)
 
 test('自定义前缀生效（prefix=//）', function()
-  local n = find(Rules.build(base_cfg({ prefix = '//' })), 'number')
-  assert_eq(n.vim_regex, '//\\d\\+\\.\\=', 'custom prefix vim_regex')
-  assert_eq(n.rg_pattern, '//\\d+\\.?', 'custom prefix rg_pattern')
+  local step = find(Rules.build(base_cfg({ prefix = '//' })), 'step')
+  assert_eq(step.vim_regex, '\\c//STEP:[a-z][a-z0-9_-]*-\\d\\+\\>', 'custom prefix vim_regex')
+  assert_eq(step.rg_pattern, '(?i)//STEP:[a-z][a-z0-9_-]*-\\d+\\b', 'custom prefix rg_pattern')
 end)
 
 print(string.format('\n总计: %d passed, %d failed', passed, failed))

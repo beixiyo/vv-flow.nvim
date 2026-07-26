@@ -7,9 +7,6 @@
   <p><img src="https://img.shields.io/badge/Neovim-0.10%2B-57A143?logo=neovim&amp;logoColor=white" alt="Neovim"> <img src="https://img.shields.io/badge/Lua-2C2D72?logo=lua&amp;logoColor=white" alt="Lua"></p>
 </div>
 
-灵感来自 VSCode *Todo Tree* 与 `@数字.` 顺序流程标记：在注释里埋 `@1.` `@2.` … 标注一条
-跨文件流程，面板里**按编号数值排序**，顺着 `@1 → @2 → … → @17` 读懂并跳转
-
 ## 依赖
 
 - [ripgrep](https://github.com/BurntSushi/ripgrep) — 必须，用于通过 `rg --json` 扫描项目内标记
@@ -20,9 +17,9 @@
 | 类型 | 例子 | 说明 |
 |------|------|------|
 | **关键字标记** | `@TODO` `@BUG` `@FIX` `@NOTE` `@HACK` `@WARN` `@PERF` | **大小写不敏感**（`@todo` == `@TODO`），各自配色，面板里按关键字分组 |
-| **编号标记** | `@1` `@01` `@17` `@3.` | 末尾 `.` **可选**，面板里**按数值升序**排成一条流程 |
+| **命名空间步骤** | `@step:auth-1` `@STEP:Checkout-2` | **大小写不敏感**，按规范化后的命名空间分组，再按末尾序号升序排列 |
 
-面板**自动分两类**：`@number`（编号组，数值升序）与各关键字组，互不冲突
+每个步骤命名空间和关键字都有独立分组，不同业务流程不会互相混入
 
 ## 能力
 
@@ -54,13 +51,20 @@ require('vv-flow').setup({
     BUG  = { color = '#f7768e', icon = '' },
     -- … FIX / NOTE / HACK / WARN / PERF
   },
-  number = { enable = true, color = '#bb9af7', icon = '', require_dot = false },
+  step = {
+    enable = true,
+    keyword = 'STEP',
+    ignore_case = true,
+    color = '#bb9af7',
+    icon = '',
+  },
   custom = {
     -- 任意正则标记，例：把 @link(...) 也高亮成一类
     -- { name = 'link', vim_regex = [[@link(]], rg_pattern = [[@link\(]], color = '#7dcfff' },
   },
   position = 'right',      -- 面板侧 'left'|'right'
   width = 42,
+  state = nil,             -- 可选 VVStateHandle；默认使用 vv-flow/panel
   max_results = 5000,
   -- 项目扫描黑名单（VS Code 风格 glob），默认覆盖常见生态的依赖目录、
   -- 构建产物、缓存与锁文件
@@ -77,10 +81,25 @@ require('vv-flow').setup({
   marks = {                -- vim marks 面板（Tab 切换）
     show = { global = true, buffer = true, numbered = false, special = false },
   },
+  panel = {
+    -- 覆盖或禁用单个 tree_panel 快捷键
+    mappings = {
+      -- x = false,
+      -- s = { desc = '自定义操作', callback = function(ctx) end },
+    },
+    render = {},           -- 覆盖 winbar/node/empty 渲染器
+    help = {},             -- 配置 tree_panel 共享的 g? 帮助
+    on_attach = nil,       -- function(panel, buf)
+  },
 })
 ```
 
-## 已知边界
+面板窗口生命周期、折叠、导航、帮助和宽度持久化统一由 `vv-utils.tree_panel` 提供。
+扫描、Vim marks、过滤和预览行为仍由 vv-flow 负责。两种模式共享宽度，
+并通过 `vv-utils.state` 的 `vv-flow/panel` 状态保存。
 
-- 编号规则是 `<prefix>\d+\.?`，会命中代码里**任意** `@数字`，如 `user@123`、CSS `@2x`
-  这些一般不在意；若困扰，可设 `number.enable = false` 或用 `custom` 自定义更严格的正则
+## 步骤语法
+
+- 默认格式是 `<prefix>step:<namespace>-<number>`
+- 命名空间必须以字母开头，可以包含字母、数字、`_` 或 `-`
+- 最后的 `-<number>` 是流程序号；命名空间匹配不区分大小写，分组时统一转为小写

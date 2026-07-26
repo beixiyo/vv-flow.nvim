@@ -5,10 +5,10 @@
 --   * vim_regex   buffer 内实时高亮用（vim.regex 编译，magic 模式语法）
 --   * rg_pattern  rg --json 跨文件扫描用（Rust 正则，作为独立 -e 传入）
 --   * hl          高亮组名
---   * kind        'number' | 'keyword' | 'custom'  决定面板分组与排序
+--   * kind        'step' | 'keyword' | 'custom'  决定面板分组与排序
 --
 -- 设计要点：大小写不敏感按「规则粒度」处理——关键字 rule 在 rg 端用内联
--- `(?i)`、vim 端用 `\c`，故无需对 rg 开全局 -i，编号/自定义 rule 不受影响。
+-- `(?i)`、vim 端用 `\c`，故无需对 rg 开全局 -i，自定义 rule 不受影响。
 
 local M = {}
 
@@ -34,7 +34,7 @@ local function rg_escape(s)
   return (s:gsub('[\\.+*?()|%[%]{}^$]', '\\%0'))
 end
 
--- 由 config 编译出有序 rule 列表；顺序即面板分组顺序（编号组优先）
+-- 由 config 编译出有序 rule 列表；顺序即面板分组顺序（step 规则优先）
 ---@param cfg VVFlowConfig
 ---@return VVFlowRule[]
 function M.build(cfg)
@@ -43,19 +43,24 @@ function M.build(cfg)
   local vp = vim_escape(prefix)
   local rp = rg_escape(prefix)
 
-  -- 编号 rule：@1 / @01 / @17（末尾 . 可选）。放最前，编号组在面板里优先展示
-  if cfg.number and cfg.number.enable ~= false then
-    local vim_dot = cfg.number.require_dot and '\\.' or '\\.\\='  -- vim: \= 表 0 或 1
-    local rg_dot = cfg.number.require_dot and '\\.' or '\\.?'
+  -- 流程步骤：@step:<namespace>-<number>。规则只负责整体命中，namespace 与
+  -- number 由 scan 分类阶段提取，从而按业务命名空间动态分组
+  if cfg.step and cfg.step.enable ~= false then
+    local keyword = cfg.step.keyword or 'STEP'
+    local vim_keyword = vim_escape(keyword)
+    local rg_keyword = rg_escape(keyword)
+    local ignore_case = cfg.step.ignore_case ~= false
     rules[#rules + 1] = {
-      name = 'number',
-      kind = 'number',
-      label = prefix .. 'number',
-      icon = cfg.number.icon or '',
-      hl = 'VVFlowNumber',
-      color = cfg.number.color,
-      vim_regex = vp .. '\\d\\+' .. vim_dot,
-      rg_pattern = rp .. '\\d+' .. rg_dot,
+      name = 'step',
+      kind = 'step',
+      label = prefix .. keyword:upper(),
+      icon = cfg.step.icon or '',
+      hl = 'VVFlowStep',
+      color = cfg.step.color,
+      vim_regex = (ignore_case and '\\c' or '\\C')
+        .. vp .. vim_keyword .. ':[a-z][a-z0-9_-]*-\\d\\+\\>',
+      rg_pattern = (ignore_case and '(?i)' or '')
+        .. rp .. rg_keyword .. ':[a-z][a-z0-9_-]*-\\d+\\b',
     }
   end
 
@@ -115,9 +120,9 @@ end
 return M
 
 ---@class VVFlowRule
----@field name string        规则唯一名（小写）。编号固定 'number'，关键字为小写词
----@field kind 'number'|'keyword'|'custom'  分类，决定面板分组与排序
----@field label string       面板分组标题文本（如 '@TODO' / '@number'）
+---@field name string        规则唯一名（小写）。流程步骤固定 'step'，关键字为小写词
+---@field kind 'step'|'keyword'|'custom'  分类，决定面板分组与排序
+---@field label string       面板分组标题文本（如 '@TODO' / '@STEP'）
 ---@field icon string        分组/标记图标
 ---@field hl string          高亮组名
 ---@field color? string|table  颜色（hex 或 highlight spec）

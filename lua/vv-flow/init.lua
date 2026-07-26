@@ -1,8 +1,7 @@
 -- vv-flow.nvim — 代码流程 / TODO 标记高亮 + 可排序跳转面板（自实现，仅依赖 ripgrep）
 --
--- 灵感来自 VSCode "Todo Tree" 与 `@数字.` 顺序流程标记。两类内置标记：
 --   * 关键字标记 @TODO / @BUG …（大小写不敏感，各自配色）
---   * 编号标记   @1 / @01 / @17（末尾 . 可选，按数值排序读流程）
+--   * 流程步骤   @step:<namespace>-<number>（按命名空间分组、数字排序）
 -- 也支持 custom 任意正则标记。
 --
 -- 能力：
@@ -31,11 +30,12 @@ local M = {}
 ---@field color? string|table  颜色：hex 字符串或 highlight spec @default 由内置给定
 ---@field icon? string         面板分组图标 @default ''
 
----@class VVFlowNumberSpec
----@field enable boolean      是否启用编号标记 @default true
+---@class VVFlowStepSpec
+---@field enable boolean      是否启用流程步骤标记 @default true
+---@field keyword string      固定关键字 @default 'STEP'
+---@field ignore_case boolean 是否忽略关键字与命名空间大小写 @default true
 ---@field color? string|table 颜色 @default '#bb9af7'
----@field icon? string        图标 @default ''
----@field require_dot boolean 末尾点是否必需（false = 可选） @default false
+---@field icon? string        图标 @default ''
 
 ---@class VVFlowCustomRule
 ---@field name string        唯一名（兼作面板分组键） @default 必填
@@ -51,10 +51,11 @@ local M = {}
 ---@field prefix string       标记前缀 @default '@'
 ---@field ignore_case boolean 关键字大小写不敏感 @default true
 ---@field keywords table<string, VVFlowKeywordSpec>  内置关键字标记表
----@field number VVFlowNumberSpec  编号标记配置
+---@field step VVFlowStepSpec  流程步骤配置
 ---@field custom VVFlowCustomRule[]  自定义任意正则标记 @default {}
 ---@field position 'left'|'right'  面板侧 @default 'right'
 ---@field width integer       面板宽度（列） @default 42
+---@field state VVStateHandle? 面板持久状态句柄，主要用于自定义存储或测试 @default register('vv-flow', 'panel')
 ---@field max_results integer 单次扫描结果上限 @default 5000
 ---@field exclude string[]     扫描排除项（VS Code 风格 glob） @default 见 defaults.exclude
 ---@field rg_extra_args string[]  追加给 rg 的额外参数 @default {}
@@ -62,9 +63,34 @@ local M = {}
 ---@field preview boolean     面板内光标移动时实时预览标记位置 @default true
 ---@field preview_debounce_ms integer  预览防抖延迟（毫秒），光标停顿后才触发；0 = 不防抖 @default 138
 ---@field marks VVFlowMarksConfig  vim marks 面板（Tab 切换）配置
+---@field panel VVFlowPanelConfig 面板渲染、快捷键和 attach 扩展 @default {}
 
 ---@class VVFlowMarksConfig
 ---@field show { global: boolean, buffer: boolean, numbered: boolean, special: boolean }  各类 mark 是否显示 @default global/buffer=true, numbered/special=false
+
+---@class VVFlowPanelConfig
+---@field mappings? false|VVTreePanelMappings  默认快捷键覆盖；false 禁用所有面板快捷键 @default nil
+---@field render? VVTreePanelRenderers  默认渲染器的局部覆盖 @default nil
+---@field help? false|VVTreePanelHelpOptions  g? 通用帮助配置；false 禁用 @default nil
+---@field on_attach? fun(panel: VVTreePanel, buf: integer)  面板 buffer 创建后的扩展入口 @default nil
+
+---@class VVFlowConfigOptions
+---@field prefix? string  标记前缀 @default '@'
+---@field ignore_case? boolean  关键字大小写不敏感 @default true
+---@field keywords? table<string, VVFlowKeywordSpec>  内置关键字标记表 @default 内置关键字
+---@field step? VVFlowStepSpec  流程步骤配置 @default 启用
+---@field custom? VVFlowCustomRule[]  自定义任意正则标记 @default {}
+---@field position? 'left'|'right'  面板侧 @default 'right'
+---@field width? integer  面板宽度（列） @default 42
+---@field state? VVStateHandle  面板持久状态句柄 @default register('vv-flow', 'panel')
+---@field max_results? integer  单次扫描结果上限 @default 5000
+---@field exclude? string[]  扫描排除项；空数组会清空默认值 @default 见 defaults.exclude
+---@field rg_extra_args? string[]  追加给 rg 的额外参数 @default {}
+---@field highlight? boolean  启动即开启实时高亮 @default true
+---@field preview? boolean  面板内实时预览 @default true
+---@field preview_debounce_ms? integer  预览防抖毫秒；0 表示禁用 @default 138
+---@field marks? VVFlowMarksConfig  Vim marks 面板配置 @default {}
+---@field panel? VVFlowPanelConfig  面板渲染、快捷键和扩展 @default {}
 
 ---@type VVFlowConfig
 local defaults = {
@@ -79,10 +105,17 @@ local defaults = {
     WARN = { color = '#e0af68', icon = '' },
     PERF = { color = '#bb9af7', icon = '' },
   },
-  number = { enable = true, color = '#bb9af7', icon = '', require_dot = false },
+  step = {
+    enable = true,
+    keyword = 'STEP',
+    ignore_case = true,
+    color = '#bb9af7',
+    icon = '',
+  },
   custom = {},
   position = 'right',
   width = 42,
+  state = nil,
   max_results = 5000,
   exclude = {
     -- 版本控制 / 编辑器
@@ -128,6 +161,7 @@ local defaults = {
   preview = true,
   preview_debounce_ms = 138,
   marks = { show = { global = true, buffer = true, numbered = false, special = false } },
+  panel = {},
 }
 
 local config = defaults
@@ -184,20 +218,29 @@ end
 -- 面板（委托 panel 模块）
 -- ============================================================
 
-function M.open() require('vv-flow.panel').open() end
+--- 获取当前配置（只读副本）
+---@return VVFlowConfig
+function M.get_config()
+  return vim.deepcopy(config)
+end
+
+function M.open() require('vv-flow.panel').open(config) end
 function M.close() require('vv-flow.panel').close() end
-function M.toggle_panel() require('vv-flow.panel').toggle() end
-function M.refresh() require('vv-flow.panel').refresh() end
+function M.toggle_panel() require('vv-flow.panel').toggle(config) end
+function M.refresh() require('vv-flow.panel').refresh(config) end
 
 -- ============================================================
 -- setup
 -- ============================================================
 
----@param opts? VVFlowConfig
+---@param opts? VVFlowConfigOptions
 function M.setup(opts)
+  local configured_state = opts and opts.state
+  local configured_exclude = opts and opts.exclude
   config = vim.tbl_deep_extend('force', vim.deepcopy(defaults), opts or {})
-  if opts and opts.exclude ~= nil then
-    config.exclude = vim.deepcopy(opts.exclude)
+  config.state = configured_state or require('vv-utils.state').register('vv-flow', 'panel')
+  if configured_exclude then
+    config.exclude = vim.deepcopy(configured_exclude)
   end
   rebuild()
 
@@ -213,12 +256,6 @@ function M.setup(opts)
   vim.api.nvim_create_user_command('VVFlowEnable',  function() M.enable() end, { desc = 'vv-flow 开启实时高亮' })
   vim.api.nvim_create_user_command('VVFlowDisable', function() M.disable() end, { desc = 'vv-flow 关闭实时高亮' })
   vim.api.nvim_create_user_command('VVFlowToggle',  toggle_highlight, { desc = 'vv-flow 切换实时高亮' })
-end
-
---- 获取当前配置（只读副本）
----@return VVFlowConfig
-function M.get_config()
-  return vim.deepcopy(config)
 end
 
 return M

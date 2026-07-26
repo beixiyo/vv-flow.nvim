@@ -139,7 +139,7 @@ function M.delete(record)
   end
 
   -- 兜底：不区分类型，按裸字符删
-  return pcall(vim.cmd, 'delmarks ' .. bare)
+  return pcall(function() vim.cmd('delmarks ' .. bare) end)
 end
 
 return M

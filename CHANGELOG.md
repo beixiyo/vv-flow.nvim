@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.0] - 2026-07-26
+
+### Added
+
+- **面板扩展配置**：新增 `panel.mappings`、`panel.render`、`panel.help` 与 `panel.on_attach`，可覆盖或禁用通用树面板的键位、渲染和帮助行为；支持注入 `state` 句柄
+
+### Changed
+
+- **默认流程标记改为命名空间语法**：使用大小写不敏感的 `@step:<namespace>-<number>`，按命名空间分组并在组内按数字排序；不再识别 `@1` / `@1.`，配置项由 `number` 改为 `step`
+- **复用 `vv-utils.tree_panel` 与 `vv-utils.state`**：窗口生命周期、折叠、导航、帮助、预览调度和宽度持久化统一交给共享实现；flow 与 Vim marks 两种模式共用用户实际调整后的宽度
+- **统一树面板交互**：分组节点可用 `<CR>` 切换折叠，叶节点按 `h` 直接折叠父组，`l` / `<CR>` 打开标记并保留面板，`gf` 打开后关闭面板；自定义键位也会进入共享 `g?` 帮助
+- **拆分数据与渲染职责**：分组、排序、稳定节点 ID 和过滤文本生成移入 `panel/model.lua`，winbar、节点与空状态展示移入 `panel/render.lua`
+
 ## [0.1.1] - 2026-07-24
 
 ### Added

@@ -3,10 +3,7 @@
 -- 流程沿用 vv-replace/search.lua：每条 rule 一个 -e，rg 输出 NDJSON 流式收集，
 -- 进程结束后一次性解析 + 分类，回调返回扁平 record 列表。ripgrep 已是项目硬依赖。
 --
--- 分类（按匹配文本，足够覆盖内置两类）：
---   * 前缀后首字符是数字 → number marker（解析出整数供数值排序）
---   * 前缀后是字母       → keyword marker（小写词名，对应 rule.name）
---   * 其余               → custom（按字面归组）
+-- 分类优先按命中的 rule；只有规则无法完整回测时，才按文本字面兜底。
 
 local M = {}
 local Glob = require('vv-utils.glob')
@@ -33,17 +30,13 @@ local function parse_ndjson_chunk(text, buffer)
 end
 
 -- 兜底：按匹配文本字面归类（当没有 rule 完整匹配时用）
----@param text string 匹配到的标记文本，如 '@TODO' / '@17.'
+---@param text string 匹配到的标记文本，如 '@TODO'
 ---@param prefix string
 ---@return { kind: string, name: string, num: integer? }
 local function classify_by_text(text, prefix)
   local body = text
   if prefix ~= '' and text:sub(1, #prefix) == prefix then
     body = text:sub(#prefix + 1)
-  end
-  local digits = body:match('^%d+')
-  if digits then
-    return { kind = 'number', name = 'number', num = tonumber(digits) }
   end
   local word = body:match('^%a[%w_]*')
   if word then
@@ -53,7 +46,7 @@ local function classify_by_text(text, prefix)
 end
 
 -- 预编译各 rule 的 vim.regex，供「按命中规则」归类
----@param rules VVFlowRule[]
+---@param rules VVFlowScanRule[]
 local function compile_matchers(rules)
   local matchers = {}
   for _, r in ipairs(rules) do
@@ -68,16 +61,26 @@ end
 -- 全不中再退回字面派生
 ---@param text string
 ---@param prefix string
----@param matchers { rule: VVFlowRule, regex: any }[]
+---@param matchers { rule: VVFlowScanRule, regex: any }[]
 ---@return { kind: string, name: string, num: integer? }
 local function classify(text, prefix, matchers)
   for _, m in ipairs(matchers) do
     if m.regex then
       local s, e = m.regex:match_str(text)
+
       if s == 0 and e == #text then
-        local num
-        if m.rule.kind == 'number' then num = tonumber(text:match('%d+')) end
-        return { kind = m.rule.kind, name = m.rule.name, num = num }
+        if m.rule.kind == 'step' then
+          local namespace, number = text:match(':([%a][%w_-]*)%-(%d+)$')
+
+          if namespace and number then
+            return {
+              kind = 'step',
+              name = namespace:lower(),
+              num = tonumber(number),
+            }
+          end
+        end
+        return { kind = m.rule.kind, name = m.rule.name }
       end
     end
   end
@@ -85,7 +88,7 @@ local function classify(text, prefix, matchers)
 end
 
 -- 构造 rg 参数
----@param rules VVFlowRule[]
+---@param rules VVFlowScanRule[]
 ---@param root string
 ---@param opts { max_results: integer, exclude: string[], rg_extra_args: string[] }
 ---@return string[]? args
@@ -96,6 +99,7 @@ local function build_args(rules, root, opts)
     args[#args + 1] = '-e'
     args[#args + 1] = r.rg_pattern
   end
+
   for _, source in ipairs(opts.exclude or {}) do
     local patterns, err = Glob.compile_rg(source, { negate = true })
     if not patterns then
@@ -106,16 +110,18 @@ local function build_args(rules, root, opts)
       args[#args + 1] = pattern
     end
   end
+
   for _, extra in ipairs(opts.rg_extra_args or {}) do
     args[#args + 1] = extra
   end
   args[#args + 1] = root
+
   return args, nil
 end
 
 -- 异步扫描；cb(records) 在主线程回调
 ---@param root string
----@param rules VVFlowRule[]
+---@param rules VVFlowScanRule[]
 ---@param opts { prefix: string, max_results: integer, exclude: string[], rg_extra_args: string[] }
 ---@param cb fun(records: VVFlowRecord[], err?: string)
 function M.scan(root, rules, opts, cb)
@@ -216,8 +222,14 @@ return M
 ---@field file string      绝对路径
 ---@field lnum integer     1-based 行号
 ---@field col integer      1-based 列
----@field text string      匹配到的标记文本（如 '@TODO' / '@17.'）
+---@field text string      匹配到的标记文本（如 '@TODO' / '@step:auth-2'）
 ---@field preview string   该行去空白后的内容，作面板预览
----@field kind 'number'|'keyword'|'custom'
----@field name string      归组键（'number' 或小写关键字名）
----@field num? integer     编号标记的数值（供数值排序）
+---@field kind 'step'|'keyword'|'custom'
+---@field name string      归组键（step 命名空间或小写关键字名）
+---@field num? integer     step 序号（供数值排序）
+
+---@class VVFlowScanRule
+---@field name string  规则唯一名
+---@field kind 'step'|'keyword'|'custom'  标记分类
+---@field vim_regex string  buffer 高亮用 Vim 正则
+---@field rg_pattern string  rg 扫描用 Rust 正则

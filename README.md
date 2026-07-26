@@ -7,8 +7,6 @@
   <p><img src="https://img.shields.io/badge/Neovim-0.10%2B-57A143?logo=neovim&amp;logoColor=white" alt="Neovim"> <img src="https://img.shields.io/badge/Lua-2C2D72?logo=lua&amp;logoColor=white" alt="Lua"></p>
 </div>
 
-Inspired by VSCode's *Todo Tree* and ordered flow markers written as `@number.`: place `@1.`, `@2.`, and so on in comments to describe a flow across files. The panel sorts them **numerically**, so you can follow and navigate `@1 → @2 → … → @17`
-
 ## Requirements
 
 - [ripgrep](https://github.com/BurntSushi/ripgrep) — required for project-wide marker scanning through `rg --json`
@@ -19,9 +17,10 @@ Inspired by VSCode's *Todo Tree* and ordered flow markers written as `@number.`:
 | Type | Examples | Description |
 |------|----------|-------------|
 | **Keyword markers** | `@TODO` `@BUG` `@FIX` `@NOTE` `@HACK` `@WARN` `@PERF` | **Case-insensitive** (`@todo` == `@TODO`), individually colored, and grouped by keyword in the panel |
-| **Numbered markers** | `@1` `@01` `@17` `@3.` | The trailing `.` is **optional**; entries are sorted in **ascending numerical order** to form a flow |
+| **Namespaced steps** | `@step:auth-1` `@STEP:Checkout-2` | **Case-insensitive**; grouped by the normalized namespace and sorted by the final number |
 
-The panel **automatically separates both types**: numbered markers appear in an `@number` group sorted numerically, while each keyword has its own group, with no conflicts between them
+The panel keeps every step namespace and keyword in a separate group, so flows from
+different business domains do not collide
 
 ## Features
 
@@ -53,13 +52,20 @@ require('vv-flow').setup({
     BUG  = { color = '#f7768e', icon = '' },
     -- … FIX / NOTE / HACK / WARN / PERF
   },
-  number = { enable = true, color = '#bb9af7', icon = '', require_dot = false },
+  step = {
+    enable = true,
+    keyword = 'STEP',
+    ignore_case = true,
+    color = '#bb9af7',
+    icon = '',
+  },
   custom = {
     -- Arbitrary regex marker; for example, highlight @link(...) as its own type
     -- { name = 'link', vim_regex = [[@link(]], rg_pattern = [[@link\(]], color = '#7dcfff' },
   },
   position = 'right',      -- Panel side: 'left'|'right'
   width = 42,
+  state = nil,             -- Optional VVStateHandle; defaults to vv-flow/panel
   max_results = 5000,
   -- VS Code-style globs excluded from project scans. Defaults cover dependency
   -- directories, build output, caches, and lockfiles across common ecosystems
@@ -76,9 +82,26 @@ require('vv-flow').setup({
   marks = {                -- Vim marks panel (switch with Tab)
     show = { global = true, buffer = true, numbered = false, special = false },
   },
+  panel = {
+    -- Override or disable individual tree_panel mappings
+    mappings = {
+      -- x = false,
+      -- s = { desc = 'custom action', callback = function(ctx) end },
+    },
+    render = {},           -- Override winbar/node/empty renderers
+    help = {},             -- Configure tree_panel's shared g? help
+    on_attach = nil,       -- function(panel, buf)
+  },
 })
 ```
 
-## Known limitations
+Panel window lifecycle, folding, navigation, help, and persisted width are provided by
+`vv-utils.tree_panel`. vv-flow keeps ownership of scanning, Vim marks, filtering, and preview behavior.
+The width is shared by both modes and stored through `vv-utils.state` under `vv-flow/panel`.
 
-- The numbered-marker rule is `<prefix>\d+\.?`, so it matches **any** `@number` in code, including `user@123` and CSS `@2x`. These matches are usually harmless; if they are distracting, set `number.enable = false` or define a stricter regular expression with `custom`
+## Step syntax
+
+- The default form is `<prefix>step:<namespace>-<number>`
+- A namespace starts with a letter and may contain letters, digits, `_`, or `-`
+- The final `-<number>` is the sequence number; namespace matching is case-insensitive
+  and normalized to lowercase for grouping
