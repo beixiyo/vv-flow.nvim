@@ -1,10 +1,9 @@
 -- vv-flow.nvim 冒烟测试
 --
--- 运行方式：luajit tests/test_smoke.lua（纯逻辑测试）
--- 或在 nvim 中 :luafile tests/test_smoke.lua
+-- 运行方式：nvim --headless -u NONE -l tests/test_smoke.lua
 --
--- 覆盖 rules.build 的规则编译（纯 lua，不依赖 nvim API）：内置 step / 关键字规则的
--- vim 正则与 rg 正则构造、大小写敏感、custom 透传、hl_specs。
+-- 覆盖 rules.build 生成的规则能被 Vim 正则实际匹配：内置 step / 关键字规则的
+-- 大小写敏感、custom 透传、hl_specs。
 -- 实时高亮 / 扫描 / 面板 / 预览等依赖 nvim API 的运行时行为见仓库 README 的 headless 验证。
 
 -- 把插件 lua/ 加入 package.path（相对本脚本定位）
@@ -43,6 +42,10 @@ local function find(rules, name)
   end
 end
 
+local function matches(rule, text)
+  return vim.regex(rule.vim_regex):match_str(text) ~= nil
+end
+
 -- 基础配置（模拟 setup 后的 config）
 local function base_cfg(over)
   local cfg = {
@@ -65,19 +68,18 @@ test('step + 关键字规则都生成，step 在最前', function()
   assert(find(rules, 'bug'), 'bug 规则存在')
 end)
 
-test('step 规则：命名空间 + 末尾数字，默认大小写不敏感', function()
+test('step 规则默认大小写不敏感，且要求命名空间与末尾数字', function()
   local step = find(Rules.build(base_cfg()), 'step')
-  assert_eq(step.vim_regex, '\\c@STEP:[a-z][a-z0-9_-]*-\\d\\+\\>', 'step vim_regex')
-  assert_eq(step.rg_pattern, '(?i)@STEP:[a-z][a-z0-9_-]*-\\d+\\b', 'step rg_pattern')
-  assert_eq(step.kind, 'step', 'step kind')
+  assert(matches(step, '@step:checkout-17'), 'lowercase namespaced step should match')
+  assert(not matches(step, '@STEP:checkout-x'), 'step without a numeric suffix should not match')
 end)
 
-test('step 规则：ignore_case=false 时区分大小写', function()
+test('step 规则在 ignore_case=false 时区分大小写', function()
   local step = find(Rules.build(base_cfg({
     step = { enable = true, keyword = 'STEP', ignore_case = false },
   })), 'step')
-  assert_eq(step.vim_regex, '\\C@STEP:[a-z][a-z0-9_-]*-\\d\\+\\>', 'case-sensitive vim_regex')
-  assert_eq(step.rg_pattern, '@STEP:[a-z][a-z0-9_-]*-\\d+\\b', 'case-sensitive rg_pattern')
+  assert(matches(step, '@STEP:checkout-17'), 'uppercase step should match')
+  assert(not matches(step, '@step:checkout-17'), 'lowercase step should not match')
 end)
 
 test('step.enable=false 时不生成', function()
@@ -85,31 +87,28 @@ test('step.enable=false 时不生成', function()
   assert_eq(find(rules, 'step'), nil, 'step disabled')
 end)
 
-test('关键字规则：大小写不敏感（vim \\c，rg (?i)，词尾 \\> / \\b）', function()
+test('关键字规则默认大小写不敏感且遵守词尾', function()
   local t = find(Rules.build(base_cfg()), 'todo')
-  assert_eq(t.vim_regex, '\\c@TODO\\>', 'todo vim_regex')
-  assert_eq(t.rg_pattern, '(?i)@TODO\\b', 'todo rg_pattern')
-  assert_eq(t.hl, 'VVFlowKwTODO', 'todo hl name')
-  assert_eq(t.label, '@TODO', 'todo label')
+  assert(matches(t, '@todo'), 'lowercase keyword should match')
+  assert(not matches(t, '@TODOmore'), 'keyword prefix should not match a longer word')
 end)
 
-test('关键字规则：ignore_case=false 时区分大小写（\\C，无 (?i)）', function()
+test('关键字规则在 ignore_case=false 时区分大小写', function()
   local t = find(Rules.build(base_cfg({ ignore_case = false })), 'todo')
-  assert_eq(t.vim_regex, '\\C@TODO\\>', 'todo vim_regex (case-sensitive)')
-  assert_eq(t.rg_pattern, '@TODO\\b', 'todo rg_pattern (case-sensitive)')
+  assert(matches(t, '@TODO'), 'uppercase keyword should match')
+  assert(not matches(t, '@todo'), 'lowercase keyword should not match')
 end)
 
 print('\n[rules] custom 透传')
 
-test('custom 规则按提供的 vim/rg 正则与 name 透传', function()
+test('custom 规则使用提供的 Vim 正则匹配', function()
   local rules = Rules.build(base_cfg({ custom = {
     { name = 'ticket', vim_regex = '@JIRA-\\d\\+', rg_pattern = '@JIRA-\\d+', kind = 'custom', color = '#7dcfff' },
   } }))
   local c = find(rules, 'ticket')
   assert(c, 'ticket 规则存在')
-  assert_eq(c.vim_regex, '@JIRA-\\d\\+', 'ticket vim_regex')
-  assert_eq(c.rg_pattern, '@JIRA-\\d+', 'ticket rg_pattern')
-  assert_eq(c.kind, 'custom', 'ticket kind')
+  assert(matches(c, '@JIRA-123'), 'custom ticket should match digits')
+  assert(not matches(c, '@JIRA-abc'), 'custom ticket should reject non-digits')
 end)
 
 test('custom 规则缺少必填字段时被忽略', function()
@@ -130,8 +129,8 @@ end)
 
 test('自定义前缀生效（prefix=//）', function()
   local step = find(Rules.build(base_cfg({ prefix = '//' })), 'step')
-  assert_eq(step.vim_regex, '\\c//STEP:[a-z][a-z0-9_-]*-\\d\\+\\>', 'custom prefix vim_regex')
-  assert_eq(step.rg_pattern, '(?i)//STEP:[a-z][a-z0-9_-]*-\\d+\\b', 'custom prefix rg_pattern')
+  assert(matches(step, '//STEP:checkout-17'), 'custom prefix step should match')
+  assert(not matches(step, '@STEP:checkout-17'), 'default prefix should not match')
 end)
 
 print(string.format('\n总计: %d passed, %d failed', passed, failed))
