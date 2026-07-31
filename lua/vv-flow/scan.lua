@@ -142,6 +142,33 @@ function M.scan(root, rules, opts, cb)
   local finished = false
   local max = opts.max_results or 5000
   local truncated = false
+  local collected_count = 0
+
+  local function collect_match(obj)
+    if obj.type ~= 'match' then return end
+
+    local data = obj.data or {}
+    local path = data.path and data.path.text
+    local lnum = data.line_number
+    if not path or not lnum then return end
+
+    local kept = {}
+    for _, sm in ipairs(data.submatches or {}) do
+      if sm.match and sm.match.text then
+        if collected_count < max then
+          kept[#kept + 1] = sm
+          collected_count = collected_count + 1
+        else
+          truncated = true
+        end
+      end
+    end
+
+    if #kept > 0 then
+      data.submatches = kept
+      collected[#collected + 1] = obj
+    end
+  end
 
   local job
   job = vim.system({ 'rg', unpack(args) }, {
@@ -152,13 +179,7 @@ function M.scan(root, rules, opts, cb)
       local parsed, new_buf = parse_ndjson_chunk(data, stdout_buf)
       stdout_buf = new_buf
       for _, obj in ipairs(parsed) do
-        if obj.type == 'match' then
-          if #collected < max then
-            collected[#collected + 1] = obj
-          else
-            truncated = true
-          end
-        end
+        collect_match(obj)
       end
       if truncated and job then
         pcall(function() job:kill('sigterm') end)
@@ -174,7 +195,7 @@ function M.scan(root, rules, opts, cb)
     vim.schedule(function()
       if #stdout_buf > 0 then
         local ok, obj = pcall(vim.json.decode, stdout_buf)
-        if ok and obj.type == 'match' then collected[#collected + 1] = obj end
+        if ok then collect_match(obj) end
       end
 
       -- code 0 = 有匹配，1 = 无匹配（正常）。其余（如 2 = 部分文件不可读，或被

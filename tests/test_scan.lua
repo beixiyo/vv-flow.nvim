@@ -128,5 +128,37 @@ for _, record in ipairs(records) do
   assert(not record.file:match('ignored/secret%.lua$'), '.gitignore 中的文件不应被扫描')
 end
 
+local limit_root = root .. '-limit'
+vim.fn.delete(limit_root, 'rf')
+write(limit_root .. '/a-multi.lua', '-- @TODO first @TODO second')
+write(limit_root .. '/b-extra.lua', '-- @TODO third')
+
+done = false
+records = nil
+scan_error = nil
+
+require('vv-flow.scan').scan(limit_root, {
+  {
+    kind = 'keyword',
+    name = 'todo',
+    vim_regex = '\\c@TODO\\>',
+    rg_pattern = '(?i)@TODO\\b',
+  },
+}, {
+  prefix = '@',
+  max_results = 2,
+  exclude = {},
+  rg_extra_args = {},
+}, function(result, err)
+  records = result
+  scan_error = err
+  done = true
+end)
+
+assert(vim.wait(5000, function() return done end), '扫描上限测试超时')
+assert(#records == 2, ('max_results=2 时应只返回 2 条 record，实际 %d 条'):format(#records))
+assert(scan_error == 'truncated', '跨 JSON match 且单行多 submatch 超限时应返回 truncated')
+
 vim.fn.delete(root, 'rf')
+vim.fn.delete(limit_root, 'rf')
 print('PASS: 跨语言黑名单与 .gitignore 均生效')

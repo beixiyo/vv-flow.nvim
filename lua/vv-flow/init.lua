@@ -244,7 +244,11 @@ function M.setup(opts)
   end
   rebuild()
 
-  if config.highlight then M.enable() end
+  if config.highlight then
+    M.enable()
+  else
+    M.disable()
+  end
 
   -- 面板
   vim.api.nvim_create_user_command('VVFlow',        function() M.toggle_panel() end, { desc = 'vv-flow 标记面板开关' })
