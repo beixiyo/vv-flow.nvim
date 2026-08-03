@@ -4,6 +4,7 @@
 -- 统一交给 vv-utils.tree_panel
 
 local Match = require('vv-utils.match')
+local Async = require('vv-utils.async')
 local TreePanel = require('vv-utils.tree_panel')
 local Marks = require('vv-flow.marks')
 local Model = require('vv-flow.panel.model')
@@ -12,6 +13,7 @@ local Rules = require('vv-flow.rules')
 local Scan = require('vv-flow.scan')
 
 local M = {}
+local scan_scope = Async.scope({ cancel_previous = true })
 
 local active_panel
 local view = {
@@ -24,7 +26,6 @@ local view = {
   filter_mode = 'fixed',
   filter_invalid = false,
   filter_close = nil,
-  scan_token = 0,
 }
 
 local CE_KEY = vim.api.nvim_replace_termcodes('<C-e>', true, false, true)
@@ -67,22 +68,23 @@ end
 
 local function scan(panel, config)
   view.rules = Rules.build(config)
-  view.scan_token = view.scan_token + 1
-  local token = view.scan_token
+  local request = scan_scope:begin()
 
-  Scan.scan(view.root, view.rules, {
+  local cancel = Scan.scan(view.root, view.rules, {
     prefix = config.prefix,
     max_results = config.max_results,
     exclude = config.exclude,
     rg_extra_args = config.rg_extra_args,
   }, function(records, err)
-    if token ~= view.scan_token or panel ~= current_panel() then return end
+    if not request:finish() or panel ~= current_panel() then return end
     if err and err ~= 'truncated' then
       vim.notify('[vv-flow] 扫描失败：' .. err, vim.log.levels.ERROR)
     end
     view.records = records
     rebuild(panel)
   end)
+
+  if cancel then request:set_cancel(cancel) end
 end
 
 local function target_buffer(panel)
@@ -138,7 +140,7 @@ local function switch_mode(panel, config)
   view.filter_query = ''
   view.records = nil
   view.groups = {}
-  view.scan_token = view.scan_token + 1
+  scan_scope:cancel()
   panel:refresh()
 
   if view.mode == 'marks' then
@@ -338,7 +340,7 @@ local function create_panel(config)
     close_preview = close_preview,
     on_attach = function(current, buf) attach(current, buf, config) end,
     on_close = function()
-      view.scan_token = view.scan_token + 1
+      scan_scope:cancel()
       if active_panel == panel then active_panel = nil end
     end,
   })

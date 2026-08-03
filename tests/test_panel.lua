@@ -113,19 +113,35 @@ local source_win = vim.api.nvim_get_current_win()
 
 local Scan = require('vv-flow.scan')
 local scan_calls = 0
+local async_scan = false
+local pending_scans = {}
+local cancelled_scans = 0
 rawset(Scan, 'scan', function(_, _, _, callback)
   scan_calls = scan_calls + 1
-  callback({
-    {
+  local function records(label)
+    return { {
       file = target,
       lnum = 1,
       col = 4,
-      text = '@TODO',
-      preview = '-- @TODO first',
+      text = '@TODO-' .. label,
+      preview = '-- @TODO ' .. label,
       kind = 'keyword',
       name = 'todo',
-    },
-  })
+    } }
+  end
+
+  if not async_scan then
+    callback(records('first'))
+    return function() end
+  end
+
+  local pending = { callback = callback, cancelled = false, records = records }
+  pending_scans[#pending_scans + 1] = pending
+  return function()
+    if pending.cancelled then return end
+    pending.cancelled = true
+    cancelled_scans = cancelled_scans + 1
+  end
 end)
 
 local custom_context
@@ -228,6 +244,28 @@ vim.fn.maparg('gf', 'n', false, true).callback()
 assert(vim.uv.fs_realpath(vim.api.nvim_buf_get_name(0)) == vim.uv.fs_realpath(target)
     and #vim.api.nvim_list_wins() == 1,
   'gf 应进入 marker 并关闭面板')
+
+async_scan = true
+Flow.open()
+Flow.refresh()
+assert(pending_scans[1].cancelled and cancelled_scans == 1,
+  '刷新 B 应物理取消在途扫描 A')
+pending_scans[2].callback(pending_scans[2].records('second'))
+pending_scans[1].callback(pending_scans[1].records('stale'))
+panel_win = vim.api.nvim_get_current_win()
+panel_buf = vim.api.nvim_get_current_buf()
+local async_lines = table.concat(vim.api.nvim_buf_get_lines(panel_buf, 0, -1, false), '\n')
+assert(async_lines:find('second', 1, true) and not async_lines:find('stale', 1, true),
+  'A 慢 B 快时旧 callback 不得覆盖 B 的面板状态: ' .. async_lines)
+
+Flow.refresh()
+local queued_after_close = pending_scans[3]
+Flow.close()
+assert(queued_after_close.cancelled and cancelled_scans == 2,
+  '关闭面板应物理取消当前扫描')
+queued_after_close.callback(queued_after_close.records('resurrected'))
+assert(#vim.api.nvim_list_wins() == 1,
+  '关闭后已排队 callback 不得重新挂载面板')
 
 vim.fn.delete(target)
 vim.fn.delete(state_path)

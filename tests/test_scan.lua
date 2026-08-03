@@ -1,7 +1,7 @@
 -- vv-flow 扫描排除项集成测试
 --
 -- 运行方式：
--- nvim --headless -u NONE -l tests/test_scan.lua
+-- 运行：nvim --headless -u NONE -l tests/test_scan.lua
 
 local src = debug.getinfo(1, 'S').source:gsub('^@', '')
 local dir = src:match('(.*/)') or './'
@@ -158,6 +158,41 @@ end)
 assert(vim.wait(5000, function() return done end), '扫描上限测试超时')
 assert(#records == 2, ('max_results=2 时应只返回 2 条 record，实际 %d 条'):format(#records))
 assert(scan_error == 'truncated', '跨 JSON match 且单行多 submatch 超限时应返回 truncated')
+
+local original_system = vim.system
+local original_schedule = vim.schedule
+local queued
+local completion
+local killed = false
+local delivered_after_cancel = false
+vim.schedule = function(callback) queued = callback end
+vim.system = function(_, _, callback)
+  completion = callback
+  return {
+    kill = function() killed = true end,
+  }
+end
+
+local cancel = require('vv-flow.scan').scan(root, {
+  {
+    kind = 'keyword',
+    name = 'todo',
+    vim_regex = '\\c@TODO\\>',
+    rg_pattern = '(?i)@TODO\\b',
+  },
+}, {
+  prefix = '@',
+  max_results = 100,
+  exclude = {},
+  rg_extra_args = {},
+}, function() delivered_after_cancel = true end)
+completion({ code = 1 })
+cancel()
+queued()
+assert(killed and not delivered_after_cancel,
+  'cancel 应压制已经进入 vim.schedule 队列的生产 callback')
+vim.system = original_system
+vim.schedule = original_schedule
 
 vim.fn.delete(root, 'rf')
 vim.fn.delete(limit_root, 'rf')

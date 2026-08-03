@@ -124,22 +124,30 @@ end
 ---@param rules VVFlowScanRule[]
 ---@param opts { prefix: string, max_results: integer, exclude: string[], rg_extra_args: string[] }
 ---@param cb fun(records: VVFlowRecord[], err?: string)
+---@return fun() cancel
 function M.scan(root, rules, opts, cb)
   if #rules == 0 then
     cb({})
-    return
+    return function() end
   end
 
   local matchers = compile_matchers(rules)
   local args, args_err = build_args(rules, root, opts)
+
   if not args then
     cb({}, args_err)
-    return
+    return function() end
   end
+
   local collected = {}
+
   local stdout_buf = ''
   local stderr_buf = ''
+
   local finished = false
+  local delivered = false
+  local cancelled = false
+
   local max = opts.max_results or 5000
   local truncated = false
   local collected_count = 0
@@ -150,9 +158,11 @@ function M.scan(root, rules, opts, cb)
     local data = obj.data or {}
     local path = data.path and data.path.text
     local lnum = data.line_number
+
     if not path or not lnum then return end
 
     local kept = {}
+
     for _, sm in ipairs(data.submatches or {}) do
       if sm.match and sm.match.text then
         if collected_count < max then
@@ -174,8 +184,9 @@ function M.scan(root, rules, opts, cb)
   job = vim.system({ 'rg', unpack(args) }, {
     text = true,
     cwd = root,
+
     stdout = function(err, data)
-      if finished or err or not data then return end
+      if finished or cancelled or err or not data then return end
       local parsed, new_buf = parse_ndjson_chunk(data, stdout_buf)
       stdout_buf = new_buf
       for _, obj in ipairs(parsed) do
@@ -185,14 +196,17 @@ function M.scan(root, rules, opts, cb)
         pcall(function() job:kill('sigterm') end)
       end
     end,
+
     stderr = function(err, data)
-      if err or not data then return end
+      if cancelled or err or not data then return end
       stderr_buf = stderr_buf .. data
     end,
   }, function(result)
-    if finished then return end
+    if finished or cancelled then return end
     finished = true
+
     vim.schedule(function()
+      if cancelled then return end
       if #stdout_buf > 0 then
         local ok, obj = pcall(vim.json.decode, stdout_buf)
         if ok then collect_match(obj) end
@@ -203,19 +217,23 @@ function M.scan(root, rules, opts, cb)
       -- 把整张面板清空。仅在「非 0/1 且无任何收集且非截断」时才当真错误。
       local hard_err = result.code ~= 0 and result.code ~= 1 and not truncated and #collected == 0
       if hard_err then
+        delivered = true
         cb({}, stderr_buf ~= '' and vim.trim(stderr_buf) or ('rg exit ' .. tostring(result.code)))
         return
       end
 
       local records = {}
+
       for _, obj in ipairs(collected) do
         local data = obj.data
         local path = data.path and data.path.text
         local lnum = data.line_number
         local line_text = (data.lines and data.lines.text) or ''
+
         if path and lnum then
           for _, sm in ipairs(data.submatches or {}) do
             local text = sm.match and sm.match.text
+
             if text then
               local meta = classify(text, opts.prefix, matchers)
               records[#records + 1] = {
@@ -232,9 +250,17 @@ function M.scan(root, rules, opts, cb)
           end
         end
       end
+
+      delivered = true
       cb(records, truncated and 'truncated' or nil)
     end)
   end)
+
+  return function()
+    if cancelled or delivered then return end
+    cancelled = true
+    if job then pcall(function() job:kill('sigterm') end) end
+  end
 end
 
 return M
