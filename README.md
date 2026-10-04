@@ -105,3 +105,24 @@ The width is shared by both modes and stored through `vv-utils.state` under `vv-
 - A namespace starts with a letter and may contain letters, digits, `_`, or `-`
 - The final `-<number>` is the sequence number; namespace matching is case-insensitive
   and normalized to lowercase for grouping
+
+## Development tests
+
+```sh
+./tests/run.sh
+./tests/run.sh 'test_scan'
+NVIM_BIN=/path/to/nvim ./tests/run.sh
+```
+
+Unix-like systems only; requires Neovim 0.12+ (0.12 stable recommended), Git and POSIX shell.
+`./tests/run.sh` prepares pinned vv-utils (`ed9b6ae`) and mini.test sources on first use;
+no sibling checkout, personal Neovim configuration or parser installation is required.
+Dependencies are cached under `VV_TEST_DEPS_CACHE` (default: `$XDG_CACHE_HOME/nvim-test-deps`
+or `~/.cache/nvim-test-deps`); later runs work offline with a populated cache.
+`VV_UTILS` optionally overrides the shared source checkout; `NVIM_BIN` defaults to `nvim`.
+The optional filter matches a literal substring of the file path or Chinese case name;
+no matches fails. The entrypoint does not install system tools.
+
+Real filesystem scans additionally require ripgrep (`rg`). Scanning uses temporary projects to verify exclusions, gitignore and truncation; asynchronous panel cases inject responses to test cancellation and stale-result guards. No remote service is queried.
+
+Each case uses a fresh child Neovim and isolated `/tmp` cwd, HOME and XDG directories. Cleanup runs on failure too. Headless tests cover API and state, not visual behavior; CI needs an outer job timeout for blocked RPC.

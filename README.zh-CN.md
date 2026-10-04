@@ -94,12 +94,31 @@ require('vv-flow').setup({
 })
 ```
 
-面板窗口生命周期、折叠、导航、帮助和宽度持久化统一由 `vv-utils.tree_panel` 提供。
+面板窗口生命周期、折叠、导航、帮助和宽度持久化统一由 `vv-utils.tree_panel` 提供
 扫描、Vim marks、过滤和预览行为仍由 vv-flow 负责。两种模式共享宽度，
-并通过 `vv-utils.state` 的 `vv-flow/panel` 状态保存。
+并通过 `vv-utils.state` 的 `vv-flow/panel` 状态保存
 
 ## 步骤语法
 
 - 默认格式是 `<prefix>step:<namespace>-<number>`
 - 命名空间必须以字母开头，可以包含字母、数字、`_` 或 `-`
 - 最后的 `-<number>` 是流程序号；命名空间匹配不区分大小写，分组时统一转为小写
+
+## 开发测试
+
+```sh
+./tests/run.sh
+./tests/run.sh 'test_scan'
+NVIM_BIN=/path/to/nvim ./tests/run.sh
+```
+
+仅支持 Unix-like 系统；要求 Neovim 0.12+（建议使用 0.12 稳定版）、Git 和 POSIX shell
+直接运行 `./tests/run.sh`，首次自动准备固定版本 vv-utils（`ed9b6ae`）与 mini.test 源码，
+不要求兄弟仓库、个人 Neovim 配置或预装 parser。依赖保存在 `VV_TEST_DEPS_CACHE`，
+默认 `$XDG_CACHE_HOME/nvim-test-deps` 或 `~/.cache/nvim-test-deps`；缓存齐全后可离线运行
+`VV_UTILS` 可显式覆盖共享源码路径；`NVIM_BIN` 默认 `nvim`。过滤词按文件路径或中文用例名
+做字面子串匹配，无匹配视为失败。入口不安装系统工具
+
+真实文件扫描额外要求 ripgrep（`rg`）。扫描使用临时项目验证排除项、gitignore 与截断；面板用例注入响应验证取消与过期回调，不查询远程服务
+
+每个 case 使用全新 child Neovim，cwd、HOME、XDG 与临时文件隔离在独立 `/tmp` 目录；失败路径同样清理。headless 覆盖 API 与状态，不替代视觉验证；CI 需外层 job timeout 中断阻塞 RPC
